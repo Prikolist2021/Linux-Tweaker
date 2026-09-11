@@ -2311,8 +2311,6 @@ class MainWindow(QMainWindow):
                          % (self.t("st_timer"), cc, timer), ""))
             html = "".join(("<p style='margin:2px 0;'>%s</p>" % r[0]) for r in rows)
             self.sig.status_html.emit(html)
-        except Exception:
-            traceback.print_exc()
     # ─── slot handlers ───
     def _on_log(self, msg, tag):
         c = self.colors()
