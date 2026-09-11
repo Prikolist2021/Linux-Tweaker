@@ -22,4 +22,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: SystemTuneup-AppImage
-          path: SystemTuneup-x86_64.AppImage
+          path: LinuxTweaker-x86_64.AppImage
