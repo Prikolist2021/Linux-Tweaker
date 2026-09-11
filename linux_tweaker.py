@@ -7,8 +7,8 @@ RU/EN, темы, анимации, детект применённых наст�
 mount-опции noatime/nodiratime, симлинки compatdata для Steam.
 """
 import sys, os, re, subprocess, time, shutil, glob, pwd, grp, traceback
-from PyQt6.QtCore import (Qt, QObject, QThread, pyqtSignal, QTimer,
-                          QPropertyAnimation, QEasingCurve, QRect, QSize)
+from PyQt6.QtCore import (Qt, QObject, QThread, pyqtSignal, QTimer, QPropertyAnimation,
+                          QEasingCurve, QRect, QRectF, QPoint, QSize)
 from PyQt6.QtGui import (QIcon, QPixmap, QPainter, QColor, QPen, QBrush,
                          QPainterPath, QLinearGradient)
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget,
@@ -334,17 +334,16 @@ def find_steam_libraries(user_home):
 
 # ─── иконки (рисуются кодом) ─────────────────────────────────────────────
 def _gear_path(cx, cy, r):
+    from PyQt6.QtGui import QTransform
     path = QPainterPath()
-    teeth = 8
-    for i in range(teeth):
-        import math
-        a = math.radians(i * 360.0 / teeth)
-        rect = QRect(cx - r * 0.16, cy - r * 1.0, r * 0.32, r * 0.42)
-        from PyQt6.QtGui import QTransform
-        tr = QTransform().translate(cx, cy).rotate(i * 360.0 / teeth).translate(-cx, -cy)
+    for i in range(8):
+        tr = QTransform().translate(cx, cy).rotate(i * 45.0).translate(-cx, -cy)
+        rect = QRectF(cx - r * 0.16, cy - r, r * 0.32, r * 0.42)
         path.addRect(tr.mapRect(rect))
-    ring = QPainterPath(); ring.addEllipse(cx - r * 0.66, cy - r * 0.66, r * 1.32, r * 1.32)
-    hole = QPainterPath(); hole.addEllipse(cx - r * 0.28, cy - r * 0.28, r * 0.56, r * 0.56)
+    ring = QPainterPath()
+    ring.addEllipse(QRectF(cx - r * 0.66, cy - r * 0.66, r * 1.32, r * 1.32))
+    hole = QPainterPath()
+    hole.addEllipse(QRectF(cx - r * 0.28, cy - r * 0.28, r * 0.56, r * 0.56))
     return path + (ring - hole)
 
 def make_icon(kind, size=48, accent="#4ec9b0", fg="#d4d4d4"):
