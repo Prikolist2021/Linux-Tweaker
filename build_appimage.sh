@@ -47,10 +47,9 @@ DESKTOP
 cp AppDir/linux-tweaker.desktop AppDir/usr/share/applications/
 # Цветная иконка 256x256, рисуется Qt в offscreen-режиме
 QT_QPA_PLATFORM=offscreen python3 - <<'PY'
-import math
 from PyQt6.QtCore import Qt, QRect
 from PyQt6.QtGui import (QPixmap, QPainter, QColor, QLinearGradient,
-                         QPainterPath, QTransform)
+                         QPainterPath, QTransform, QPen, QBrush)
 from PyQt6.QtWidgets import QApplication
 app = QApplication([])
 S = 256
@@ -64,14 +63,17 @@ def gear(cx, cy, r):
     path = QPainterPath()
     for i in range(8):
         tr = QTransform().translate(cx, cy).rotate(i * 45).translate(-cx, -cy)
-        path.addRect(tr.mapRect(QRect(cx - r * 0.16, cy - r, r * 0.32, r * 0.42)))
-    ring = QPainterPath(); ring.addEllipse(cx - r * 0.66, cy - r * 0.66, r * 1.32, r * 1.32)
-    hole = QPainterPath(); hole.addEllipse(cx - r * 0.28, cy - r * 0.28, r * 0.56, r * 0.56)
+        rect = QRect(int(cx - r * 0.16), int(cy - r), int(r * 0.32), int(r * 0.42))
+        path.addRect(tr.mapRect(rect))
+    ring = QPainterPath()
+    ring.addEllipse(int(cx - r * 0.66), int(cy - r * 0.66), int(r * 1.32), int(r * 1.32))
+    hole = QPainterPath()
+    hole.addEllipse(int(cx - r * 0.28), int(cy - r * 0.28), int(r * 0.56), int(r * 0.56))
     return path + (ring - hole)
 p.fillPath(gear(S * 0.42, S * 0.45, S * 0.26), QBrush(QColor("#ffffff")))
 p.setPen(Qt.PenStyle.NoPen); p.setBrush(QColor("#10201c"))
 p.drawEllipse(int(S * 0.58), int(S * 0.58), int(S * 0.26), int(S * 0.26))
-p.setPen(QPen(QColor("#ffffff"), S * 0.05))
+p.setPen(QPen(QColor("#ffffff"), int(S * 0.05)))
 p.drawArc(int(S * 0.60), int(S * 0.60), int(S * 0.22), int(S * 0.22), 30 * 16, 200 * 16)
 p.end()
 px.save("AppDir/linux-tweaker.png")
