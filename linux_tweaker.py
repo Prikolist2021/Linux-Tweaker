@@ -1514,7 +1514,10 @@ class MainWindow(QMainWindow):
     # ─── UI build ───
     def build_ui(self):
         c = self.colors()
-        self.setStyleSheet(QSS.format(**c))
+        qss = QSS.replace("{{", "{").replace("}}", "}")
+        for _k, _v in c.items():
+            qss = qss.replace("{" + _k + "}", _v)
+        self.setStyleSheet(qss)
         self.setWindowTitle("%s v%s" % (APP_NAME, APP_VERSION))
         self.setWindowIcon(QIcon(make_icon("logo", 64)))
         central = QWidget(); central.setObjectName("central")
