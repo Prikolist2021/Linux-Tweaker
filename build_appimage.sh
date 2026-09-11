@@ -19,11 +19,27 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends python3 python3-pip wget ca-certificates \
   file desktop-file-utils libglib2.0-bin binutils patchelf libegl1 libgl1 libxkbcommon0 \
-  libdbus-1-3 libfontconfig1 libfreetype6 libpython3.10
+  libdbus-1-3 libfontconfig1 libfreetype6 libpython3.10 \
+  libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+  libxcb-render-util0 libxcb-shape0 libxcb-xkb1
 python3 -m pip install --upgrade pip
 python3 -m pip install pyinstaller PyQt6
+XCB_ADD=""
+for lib in libxcb-cursor.so.0 libxcb-icccm.so.4 libxcb-image.so.0 libxcb-keysyms.so.1 \
+           libxcb-render-util.so.0 libxcb-shape.so.0 libxcb-xkb.so.1; do
+  if [ -f "/usr/lib/x86_64-linux-gnu/$lib" ]; then
+    XCB_ADD="$XCB_ADD --add-binary /usr/lib/x86_64-linux-gnu/$lib:."
+  fi
+done
+XCB_ADD=""
+for lib in libxcb-cursor.so.0 libxcb-icccm.so.4 libxcb-image.so.0 libxcb-keysyms.so.1 \
+           libxcb-render-util.so.0 libxcb-shape.so.0 libxcb-xkb.so.1; do
+  if [ -f "/usr/lib/x86_64-linux-gnu/$lib" ]; then
+    XCB_ADD="$XCB_ADD --add-binary /usr/lib/x86_64-linux-gnu/$lib:."
+  fi
+done
 pyinstaller --onefile --windowed --name linux-tweaker \
-  --collect-submodules PyQt6 --hidden-import PyQt6.sip src/linux_tweaker.py
+  --collect-submodules PyQt6 --hidden-import PyQt6.sip $XCB_ADD src/linux_tweaker.py
 mkdir -p AppDir/usr/bin AppDir/usr/share/applications \
   AppDir/usr/share/icons/hicolor/256x256/apps
 cp dist/linux-tweaker AppDir/usr/bin/linux-tweaker
