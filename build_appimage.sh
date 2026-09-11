@@ -19,7 +19,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends python3 python3-pip wget ca-certificates \
   file desktop-file-utils libglib2.0-bin binutils patchelf libegl1 libgl1 libxkbcommon0 \
-  libdbus-1-3 libfontconfig1 libfreetype6
+  libdbus-1-3 libfontconfig1 libfreetype6 libpython3.10
 python3 -m pip install --upgrade pip
 python3 -m pip install pyinstaller PyQt6
 pyinstaller --onefile --windowed --name linux-tweaker \
