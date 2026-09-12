@@ -491,16 +491,14 @@ def find_steam_libraries(user_home):
                         sa = os.path.join(p, "steamapps")
                         if os.path.isdir(sa) and sa not in libs:
                             libs.append(sa)
-    except Exception:
-        pass
+        except Exception:        # ← 8 пробелов, под try:
+            pass                 # ← 12 пробелов, тело except
     for pat in ("/media/*/Steam/steamapps", "/mnt/*/Steam/steamapps",
                 "/run/media/*/*/Steam/steamapps"):
         for p in glob.glob(pat):
             if os.path.isdir(p) and p not in libs:
                 libs.append(p)
     return libs
-
-
 def lines_in(content):
     return content.splitlines()
 
