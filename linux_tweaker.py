@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Linux Tweaker v0.08 (build 0.08.1)
+Linux Tweaker v0.08.2
 Графическая оболочка тюнинга Linux Mint / Ubuntu / Debian на PyQt6.
 RU/EN, светлая/тёмная тема, детект применённых настроек,
 откат, бэкапы, mount-опции, симлинки compatdata для Steam, отладочный лог.
@@ -16,12 +16,11 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget,
                              QCheckBox, QLineEdit, QComboBox, QTextEdit,
                              QTextBrowser, QTableWidget, QTableWidgetItem,
                              QAbstractItemView, QHeaderView, QScrollArea, QFrame,
-                             QInputDialog, QMessageBox, QFileDialog, QMenu, QDialog,
+                             QInputDialog, QMessageBox, QMenu, QDialog,
                              QGraphicsOpacityEffect)
 
 APP_NAME = "Linux Tweaker"
-APP_VERSION = "0.08"
-BUILD = "0.08.1"
+APP_VERSION = "0.08.2"
 GITHUB_URL = "https://github.com/Prikolist2021/Linux-Tweaker"
 
 THEMES = {
@@ -108,7 +107,7 @@ OPTIONS_META = {
         "en": ("REISUB (Magic SysRq)", "Enables SysRq emergency keys (mask 244): on a freeze hold Alt+PrtSc and press R E I S U B in order to safely terminate processes, sync and reboot without a hard reset.", "Kernel & boot", "kernel.sysrq=244")},
     "ntsync": {
         "ru": ("ntsync (модуль ядра)", "Включает модуль ntsync — новый ускоритель синхронизации для Wine/Proton. Заметный прирост FPS в части игр. Требуется ядро 6.14+ или с патчем ntsync.", "Игры и совместимость", "модуль ядра ntsync"),
-        "en": ("ntsync (kernel module)", "Enables the ntsync module — a new synchronization accelerator for Wine/Proton. Noticeable FPS gain in some games. Needs kernel 6.14+ or a patched one.", "Gaming & compatibility", "ntsync kernel module")},
+        "en": ("ntsync (kernel module)", "Enables the ntsync module — a new synchronization accelerator for Wine/Proton. Noticeable FPS gain in some games. Needs kernel 6.14+ or an ntsync-patched one.", "Gaming & compatibility", "ntsync kernel module")},
     "ntfs3": {
         "ru": ("ntfs3 драйвер", "Включает быстрый встроенный драйвер ntfs3 для NTFS-дисков вместо медленного ntfs-3g. Linux Mint по умолчанию его блокирует — опция снимает блокировку.", "Диски и файловые системы", "быстрый драйвер ntfs3"),
         "en": ("ntfs3 driver", "Enables the fast in-kernel ntfs3 driver for NTFS disks instead of slow ntfs-3g. Linux Mint blocks it by default — this option lifts the block.", "Drives & filesystems", "fast ntfs3 driver")},
@@ -132,34 +131,37 @@ CAT_ORDER = {
            "Convenience", "Updates"],
 }
 
+REBOOT_KEYS = {"audit", "raid", "nmi_watchdog", "ppfeaturemask", "nvidia_modeset",
+               "zswap", "thp", "zram", "commit"}
+
 OPTIONS_HELP = {
-    "rsyslog": {"ru": "rsyslog — служба, которая записывает системные журналы в файлы на диске (/var/log). На домашнем ПК эти файлы почти не нужны, но постоянно нагружают диск. Отключение безопасно: важные сообщения по-прежнему видны через journalctl.", "en": "rsyslog writes system logs to files on disk (/var/log). On a home PC these files are rarely needed but constantly load the disk. Disabling is safe: important messages remain visible via journalctl."},
-    "journald": {"ru": "journald — современный журнал systemd. Перенос его в ОЗУ (Storage=volatile) значит, что журналы не пишутся на диск вовсе и исчезают после перезагрузки. Это снижает износ SSD. Ограничение 50 МБ не даёт журналам съесть память.", "en": "journald is the modern systemd log. Moving it to RAM (Storage=volatile) means logs are never written to disk and vanish after reboot, reducing SSD wear. The 50 MB cap prevents logs from eating memory."},
-    "audit": {"ru": "audit — подсистема ядра для записи каждого системного вызова (нужна в корпоративных средах для безопасности). Дома она только создаёт накладные расходы. Отключение (audit=0) слегка ускоряет систему и убирает лишние записи.", "en": "audit is a kernel subsystem logging every syscall (needed in corporate security environments). At home it only adds overhead. Disabling (audit=0) slightly speeds up the system and removes noise."},
-    "raid": {"ru": "При загрузке ядро ищет RAID-массивы. Если у вас их нет, поиск тратит время впустую. raid=noautodetect отключает поиск и ускоряет загрузку. НЕ включайте, если используете RAID!", "en": "At boot the kernel probes for RAID arrays. If you have none, the probe wastes time. raid=noautodetect skips it and speeds up boot. DO NOT enable if you use RAID!"},
-    "nmi_watchdog": {"ru": "NMI-watchdog — механизм ядра для отладки зависаний через немаскируемые прерывания. На домашнем ПК он не нужен, а его периодические прерывания дают микро-фризы. Отключение (nmi_watchdog=0) убирает их.", "en": "The NMI watchdog is a kernel debugging facility using non-maskable interrupts. Unneeded at home; its periodic interrupts cause micro-stutters. Disabling (nmi_watchdog=0) removes them."},
-    "corectrl": {"ru": "CoreCtrl — программа для тонкой настройки AMD GPU (частоты, вентиляторы, лимиты). По умолчанию её действия требуют пароль администратора. Это правило Polkit разрешает вашей группе пользователей управлять GPU без пароля.", "en": "CoreCtrl is a tool for fine-tuning AMD GPU (clocks, fans, limits). By default its actions require the admin password. This Polkit rule lets your user group control the GPU without a password."},
-    "ppfeaturemask": {"ru": "Драйвер amdgpu на старых ядрах блокирует часть функций управления питанием. Параметр amdgpu.ppfeaturemask=0xffffffff снимает блокировку, и CoreCtrl получает полный контроль над частотами.", "en": "On older kernels the amdgpu driver blocks some power-management features. amdgpu.ppfeaturemask=0xffffffff lifts the block so CoreCtrl gets full clock control."},
-    "nvidia_modeset": {"ru": "nvidia-drm.modeset=1 включает kernel modesetting для проприетарного драйвера NVIDIA: необходимо для Wayland, плавного переключения видеорежимов и корректной работы композитора.", "en": "nvidia-drm.modeset=1 enables kernel modesetting for the proprietary NVIDIA driver: required for Wayland, smooth mode switching and correct compositing."},
-    "vrr": {"ru": "VRR (FreeSync) позволяет монитору обновляться синхронно с кадрами игры, убирая разрывы картинки. Работает только в X11 с драйвером amdgpu и на мониторе с поддержкой FreeSync.", "en": "VRR (FreeSync) lets the monitor refresh in sync with game frames, removing tearing. Works only in X11 with the amdgpu driver and a FreeSync-capable monitor."},
-    "radv": {"ru": "SAM / Resizable BAR даёт процессору доступ ко всей видеопамяти сразу, а не кусками. Это даёт небольшой прирост FPS в играх. Параметр включает оптимизацию в открытом драйвере RADV.", "en": "SAM / Resizable BAR gives the CPU access to all VRAM at once instead of chunks, giving a small FPS gain. This option enables the optimization in the open RADV driver."},
-    "mesa": {"ru": "MESA кэширует скомпилированные шейдеры игр. По умолчанию кэш мал, и игры часто перекомпилируют шейдеры, вызывая подтормаживания. Увеличение кэша до 4 ГБ уменьшает эти паузы.", "en": "MESA caches compiled game shaders. The default cache is small so games recompile shaders often, causing hitches. Raising the cache to 4 GB reduces these pauses."},
-    "pipewire": {"ru": "PipeWire — звуковой сервер. Малые буферы дают низкую задержку, но на некоторых системах вызывают треск и щелчки. Увеличение буферов (квантов) убирает артефакты ценой чуть большей задержки (незаметно на практике).", "en": "PipeWire is the sound server. Small buffers give low latency but on some systems cause crackling. Increasing the quanta removes artifacts at the cost of slightly higher latency (imperceptible in practice)."},
-    "bbr": {"ru": "BBR — современный алгоритм управления перегрузками TCP от Google. Вместе с очередью fq даёт более высокую реальную пропускную способность и меньшие задержки, особенно на нестабильных каналах.", "en": "BBR is Google's modern TCP congestion control. Together with the fq queue it gives higher real throughput and lower latency, especially on unstable links."},
-    "swap": {"ru": "vm.swappiness управляет тем, как охотно система вытесняет память в swap. Высокое значение (150) выгодно для сжатого zram (память), низкое (10) — для диска/SSD, чтобы не дёргать диск лишний раз.", "en": "vm.swappiness controls how eagerly memory is pushed to swap. A high value (150) suits compressed zram (memory); a low value (10) suits disk/SSD to avoid needless disk access."},
-    "zram": {"ru": "zram создаёт сжатое блочное устройство в оперативной памяти и использует его как swap. Это быстрее дискового swap и экономит ресурс SSD. Требует установленный zram-generator; активируется после перезагрузки.", "en": "zram creates a compressed block device in RAM and uses it as swap. Faster than disk swap and saves SSD wear. Requires zram-generator; activates after reboot."},
-    "zswap": {"ru": "zswap — сжатый кэш в памяти ПЕРЕД дисковым swap: страницы сначала сжимаются в RAM и только при переполнении уходят на диск. Меньше обращений к диску, совместим с обычным swap и гибернацией.", "en": "zswap is a compressed cache in RAM in front of disk swap: pages compress in RAM first and only go to disk on overflow. Fewer disk accesses, works with normal swap and hibernation."},
-    "thp": {"ru": "Transparent HugePages — прозрачные огромные страницы памяти. always — всегда (может давать задержки), madvise — только по запросу приложений (рекомендуется для игр/БД), never — отключено. Значение передаётся через GRUB.", "en": "Transparent HugePages. always — always on (can cause stalls), madvise — only on app request (recommended for games/DB), never — off. The value is passed via GRUB."},
-    "sysctl_cache": {"ru": "vfs_cache_pressure говорит ядру, как агрессивно освобождать кэш каталогов и файлов. Значение 50 (вместо 100) значит, что кэш держится дольше и файлы открываются быстрее, особенно при частой работе с множеством файлов.", "en": "vfs_cache_pressure tells the kernel how aggressively to free directory/file cache. Value 50 (instead of 100) keeps the cache longer so files open faster, especially with many files."},
-    "sysctl_numa": {"ru": "kernel.numa_balancing автоматически переносит страницы памяти между ядрами CPU (полезно на серверах с NUMA). На домашних ПК это чаще вредит: миграция вызывает паузы. Отключение (0) убирает эти паузы.", "en": "kernel.numa_balancing automatically migrates memory pages between CPU cores (useful on NUMA servers). On home PCs it usually hurts: migration causes stalls. Disabling (0) removes those stalls."},
-    "reisub": {"ru": "kernel.sysrq=244 разрешает аварийные функции ядра Magic SysRq, из которых состоит последовательность REISUB: R (вернуть клавиатуру из-под X), E/I (корректно завершить/убить процессы), S (синхронизация дисков), U (remount read-only), B (перезагрузка). Маска 244 = сумма этих битов (4+16+32+64+128) без опасных отладочных функций. При зависании удерживайте Alt+PrtSc и нажимайте клавиши по порядку с интервалом 1–2 с.", "en": "kernel.sysrq=244 enables the Magic SysRq emergency functions that make up REISUB: R (unraw keyboard), E/I (terminate/kill processes), S (sync disks), U (remount read-only), B (reboot). Mask 244 = sum of these bits (4+16+32+64+128) without dangerous debug functions. On a freeze hold Alt+PrtSc and press the keys in order 1–2 s apart."},
-    "ntsync": {"ru": "ntsync — новый модуль ядра, ускоряющий синхронизацию потоков в Wine/Proton. Игры под Windows используют много примитивов синхронизации; ntsync делает их быстрее, давая прирост FPS. Требует ядро 6.14+ или патченное.", "en": "ntsync is a new kernel module speeding up thread synchronization in Wine/Proton. Windows games use many sync primitives; ntsync makes them faster, giving FPS gains. Needs kernel 6.14+ or a patched one."},
-    "ntfs3": {"ru": "ntfs3 — современный встроенный драйвер NTFS (быстрый). Mint блокирует его и использует медленный ntfs-3g. Опция снимает блокировку, и NTFS-диски работают заметно быстрее.", "en": "ntfs3 is the modern in-kernel NTFS driver (fast). Mint blocks it and uses slow ntfs-3g. This option lifts the block so NTFS disks work noticeably faster."},
-    "commit": {"ru": "commit=NN задаёт интервал (в секундах), с которым ext4 сбрасывает метаданные на диск. Больше значение — меньше мелких записей и меньше износа SSD, но чуть выше риск потери последних метаданных при сбое питания. По умолчанию 60.", "en": "commit=NN sets the interval (seconds) at which ext4 flushes metadata to disk. Higher value — fewer small writes and less SSD wear, but slightly higher risk of losing last metadata on power loss. Default 60."},
-    "aliases": {"ru": "Добавляет в ваш .bashrc готовые функции: upd (обновить списки), upgr (обновить пакеты), update_all (полное обновление), clean (очистка), space (место на диске), mem (очистка памяти) и др. Это экономит время на рутинных операциях.", "en": "Adds ready functions to your .bashrc: upd (update lists), upgr (upgrade packages), update_all (full update), clean (cleanup), space (disk free), mem (memory clean) etc. Saves time on routine operations."},
-    "autoupdate": {"ru": "Создаёт systemd-таймер, который по расписанию обновляет систему и Flatpak. ВАЖНО: отключите встроенное автообновление Mint (mintupdate / автоматизацию), иначе обновления будут запускаться дважды и конфликтовать.", "en": "Creates a systemd timer that updates the system and Flatpak on schedule. IMPORTANT: disable the built-in Mint auto-update (mintupdate automation), otherwise updates will run twice and conflict."},
-    "mount": {"ru": "Опция монтирования noatime отключает обновление времени последнего доступа к файлам и каталогам (nodiratime — её историческое подмножество, отдельно не требуется). Это убирает лишние операции записи при каждом чтении, снижая износ SSD и ускоряя чтение. Вступает в силу после перезагрузки.", "en": "The noatime mount option disables updating last-access times for files and directories (nodiratime is its historical subset and is not needed separately). This removes extra write operations on every read, reducing SSD wear and speeding up reads. Takes effect after reboot."},
-    "steam": {"ru": "Игры Steam под Proton хранят данные (префиксы) в ~/.steam/steam/steamapps/compatdata. Если библиотека Steam лежит на другом диске (NTFS), игра не находит эти данные. Симлинк compatdata в библиотеке указывает на домашнюю папку, и игры работают корректно.", "en": "Steam Proton games store data (prefixes) in ~/.steam/steam/steamapps/compatdata. If a Steam library is on another disk (NTFS), games cannot find this data. A compatdata symlink in the library points to the home folder so games work correctly."},
+    "rsyslog": {"ru": "rsyslog — служба, которая постоянно дописывает системные журналы в файлы на диске (/var/log/syslog и другие). На домашнем ПК эти файлы почти никто не читает, зато диск получает лишние операции записи, а SSD изнашивается. Отключение безопасно: все важные сообщения останутся в журнале systemd, который читается командой journalctl. Действует сразу после применения, перезагрузка не нужна. Откат включает службу обратно.", "en": "rsyslog constantly appends system logs to files on disk (/var/log/syslog and others). On a home PC nobody reads these files, yet the disk gets extra write operations and SSD wear. Disabling is safe: all important messages remain in the systemd journal, readable via journalctl. Takes effect immediately, no reboot needed. Rollback re-enables the service."},
+    "journald": {"ru": "journald — современный журнал systemd. Перенос его в оперативную память (Storage=volatile) означает, что журналы вообще не пишутся на диск и исчезают после перезагрузки — это бережёт SSD. Ограничение 50 МБ не даёт журналам съесть много памяти. После применения служба journald перезапускается сама, перезагрузка не нужна. Это нормальное поведение: логи «живут» до перезагрузки.", "en": "journald is the modern systemd log. Moving it to RAM (Storage=volatile) means logs are never written to disk and vanish after reboot — this saves SSD wear. The 50 MB cap prevents logs from eating much memory. After applying, journald restarts itself; no reboot needed. Logs living until reboot is normal behavior."},
+    "audit": {"ru": "audit — подсистема ядра, которая протоколирует каждый системный вызов (нужна в корпоративных средах для безопасности). Дома она только создаёт накладные расходы и лишние записи. Параметр audit=0 добавляется в загрузчик GRUB, поэтому ВСТУПАЕТ В СИЛУ ПОСЛЕ ПЕРЕЗАГРУЗКИ. Откат убирает параметр из GRUB автоматически.", "en": "audit is a kernel subsystem logging every syscall (needed in corporate security environments). At home it only adds overhead and noise. The audit=0 parameter is added to the GRUB bootloader, so IT TAKES EFFECT AFTER A REBOOT. Rollback removes the parameter from GRUB automatically."},
+    "raid": {"ru": "При каждой загрузке ядро ищет RAID-массивы (объединения дисков). Если у вас их нет — поиск тратит время впустую. Параметр raid=noautodetect отключает поиск и ускоряет загрузку. Добавляется в GRUB, поэтому ВСТУПАЕТ В СИЛУ ПОСЛЕ ПЕРЕЗАГРУЗКИ. НЕ включайте, если реально используете RAID! На системах с обнаруженным RAID опция блокируется автоматически.", "en": "At every boot the kernel probes for RAID arrays (combined disks). If you have none, the probe wastes time. raid=noautodetect skips the probe and speeds up boot. It is added to GRUB, so IT TAKES EFFECT AFTER A REBOOT. DO NOT enable if you actually use RAID! On systems with detected RAID the option is disabled automatically."},
+    "nmi_watchdog": {"ru": "NMI-watchdog — механизм ядра для отладки зависаний: он периодически шлёт немаскируемые прерывания процессору. На домашнем ПК это не нужно, а прерывания дают микро-фризы в играх и нагрузках. Параметр nmi_watchdog=0 добавляется в GRUB, ВСТУПАЕТ В СИЛУ ПОСЛЕ ПЕРЕЗАГРУЗКИ.", "en": "The NMI watchdog is a kernel facility for debugging hangs: it periodically sends non-maskable interrupts to the CPU. On a home PC it is unneeded, and the interrupts cause micro-stutters in games and loads. nmi_watchdog=0 is added to GRUB and TAKES EFFECT AFTER A REBOOT."},
+    "corectrl": {"ru": "CoreCtrl — программа для тонкой настройки AMD GPU (частоты, вентиляторы, лимиты питания). По умолчанию её действия требуют пароль администратора. Этот твик создаёт правило Polkit, которое разрешает вашей группе пользователей управлять GPU без пароля. В поле «Группа» укажите группу пользователей (по умолчанию подставлена ваша). Действует сразу, перезагрузка не нужна.", "en": "CoreCtrl is a tool for fine-tuning AMD GPU (clocks, fans, power limits). By default its actions require the admin password. This tweak creates a Polkit rule allowing your user group to control the GPU without a password. In the Group field specify the user group (defaults to yours). Takes effect immediately, no reboot needed."},
+    "ppfeaturemask": {"ru": "Драйвер amdgpu на старых ядрах блокирует часть функций управления питанием видеокарты. Параметр amdgpu.ppfeaturemask=0xffffffff снимает блокировку, и CoreCtrl получает полный контроль над частотами. Добавляется в GRUB, ВСТУПАЕТ В СИЛУ ПОСЛЕ ПЕРЕЗАГРУЗКИ. Имеет смысл только для AMD.", "en": "On older kernels the amdgpu driver blocks some GPU power-management features. amdgpu.ppfeaturemask=0xffffffff lifts the block so CoreCtrl gets full clock control. Added to GRUB, TAKES EFFECT AFTER A REBOOT. Only meaningful for AMD."},
+    "nvidia_modeset": {"ru": "nvidia-drm.modeset=1 включает kernel modesetting для проприетарного драйвера NVIDIA: без него не работает Wayland, возможны проблемы с переключением видеорежимов и композитором. Добавляется в GRUB, ВСТУПАЕТ В СИЛУ ПОСЛЕ ПЕРЕЗАГРУЗКИ. На системах без NVIDIA опция блокируется автоматически.", "en": "nvidia-drm.modeset=1 enables kernel modesetting for the proprietary NVIDIA driver: without it Wayland does not work and mode switching/compositing may misbehave. Added to GRUB, TAKES EFFECT AFTER A REBOOT. On systems without NVIDIA the option is disabled automatically."},
+    "vrr": {"ru": "VRR (FreeSync) позволяет монитору обновляться синхронно с кадрами игры, убирая разрывы картинки при плавающем FPS. Работает только в X11 с драйвером amdgpu и на мониторе с поддержкой FreeSync. Создаётся конфиг X11; чтобы он применился, НУЖЕН ПЕРЕЗАХОД В СЕАНС (или перезагрузка).", "en": "VRR (FreeSync) lets the monitor refresh in sync with game frames, removing tearing at fluctuating FPS. Works only in X11 with the amdgpu driver and a FreeSync-capable monitor. An X11 config is created; to apply it YOU NEED TO RELOG (or reboot)."},
+    "radv": {"ru": "SAM / Resizable BAR даёт процессору доступ ко всей видеопамяти сразу, а не кусками, — небольшой прирост FPS в играх. Параметр RADV_PERFTEST=sam включает оптимизацию в открытом драйвере RADV. Переменные из /etc/environment читаются при входе в сеанс, поэтому НУЖЕН ПЕРЕЗАХОД В СЕАНС (или перезагрузка).", "en": "SAM / Resizable BAR gives the CPU access to all VRAM at once instead of chunks — a small FPS gain. RADV_PERFTEST=sam enables the optimization in the open RADV driver. Variables from /etc/environment are read at login, so YOU NEED TO RELOG (or reboot)."},
+    "mesa": {"ru": "MESA кэширует скомпилированные шейдеры игр. По умолчанию кэш мал, игры часто перекомпилируют шейдеры — отсюда подтормаживания в первые минуты. Увеличение кэша до 4 ГБ уменьшает паузы. Переменные из /etc/environment читаются при входе в сеанс, поэтому НУЖЕН ПЕРЕЗАХОД В СЕАНС (или перезагрузка).", "en": "MESA caches compiled game shaders. The default cache is small so games recompile shaders often, causing hitches in the first minutes. Raising the cache to 4 GB reduces pauses. Variables from /etc/environment are read at login, so YOU NEED TO RELOG (or reboot)."},
+    "pipewire": {"ru": "PipeWire — звуковой сервер. Малые буферы дают низкую задержку, но на некоторых системах вызывают треск, щелчки и прерывистый звук. Увеличение буферов (квантов) убирает артефакты ценой чуть большей задержки (на практике незаметно). Конфиг создаётся в вашей домашней папке; обычно PipeWire подхватывает его после перезапуска службы или перезахода в сеанс.", "en": "PipeWire is the sound server. Small buffers give low latency but on some systems cause crackling, pops and stuttering. Increasing the quanta removes artifacts at the cost of slightly higher latency (imperceptible in practice). The config is created in your home folder; PipeWire usually picks it up after the service restarts or after relogin."},
+    "bbr": {"ru": "BBR — современный алгоритм управления перегрузками TCP от Google. Вместе с очередью fq он даёт более высокую реальную скорость и меньшие задержки, особенно на нестабильных каналах (Wi-Fi, VPN, дальние серверы). Модуль загружается и параметр применяется СРАЗУ, перезагрузка не нужна.", "en": "BBR is Google's modern TCP congestion control. Together with the fq queue it gives higher real throughput and lower latency, especially on unstable links (Wi-Fi, VPN, remote servers). The module loads and the parameter applies IMMEDIATELY, no reboot needed."},
+    "swap": {"ru": "vm.swappiness (0–200) управляет тем, как охотно система вытесняет память в swap. Высокое значение (150) выгодно для сжатого zram (это память, обращение дешёвое), низкое (10) — для диска/SSD, чтобы не дёргать диск лишний раз. Применяется СРАЗУ через sysctl. Значение можно задать вручную в поле.", "en": "vm.swappiness (0–200) controls how eagerly memory is pushed to swap. A high value (150) suits compressed zram (it is RAM, cheap to access); a low value (10) suits disk/SSD to avoid needless disk access. Applies IMMEDIATELY via sysctl. The value can be set manually in the field."},
+    "zram": {"ru": "zram создаёт сжатое блочное устройство прямо в оперативной памяти и использует его как swap: это быстрее дискового swap и бережёт SSD. Для работы нужен пакет zram-generator (если его нет — опция показана неактивной). Конфиг создаётся сейчас, но устройство появится ПОСЛЕ ПЕРЕЗАГРУЗКИ.", "en": "zram creates a compressed block device right in RAM and uses it as swap: faster than disk swap and saves SSD wear. It requires the zram-generator package (if missing, the option is shown disabled). The config is created now, but the device appears AFTER A REBOOT."},
+    "zswap": {"ru": "zswap — сжатый кэш в памяти ПЕРЕД дисковым swap: страницы сначала сжимаются в RAM и только при переполнении уходят на диск. Меньше обращений к диску, быстрее отклик при нехватке памяти; совместим с обычным swap и гибернацией. Добавляется в GRUB, ВСТУПАЕТ В СИЛУ ПОСЛЕ ПЕРЕЗАГРУЗКИ.", "en": "zswap is a compressed cache in RAM in front of disk swap: pages compress in RAM first and only go to disk on overflow. Fewer disk accesses, faster response under memory pressure; works with normal swap and hibernation. Added to GRUB, TAKES EFFECT AFTER A REBOOT."},
+    "thp": {"ru": "Transparent HugePages — прозрачные огромные страницы памяти. always — всегда (может давать задержки из-за дефрагментации), madvise — только по запросу приложений (рекомендуется для игр и БД), never — отключено. Текущее значение системы показывается рядом с выбором. Параметр добавляется в GRUB, ВСТУПАЕТ В СИЛУ ПОСЛЕ ПЕРЕЗАГРУЗКИ.", "en": "Transparent HugePages. always — always on (can stall due to defrag), madvise — only on app request (recommended for games/DB), never — off. The current system value is shown next to the selector. The parameter is added to GRUB and TAKES EFFECT AFTER A REBOOT."},
+    "sysctl_cache": {"ru": "vfs_cache_pressure говорит ядру, как агрессивно освобождать кэш каталогов и файлов. Значение 50 (вместо 100) значит, что кэш держится дольше и файлы открываются быстрее, особенно при работе с множеством файлов. Применяется СРАЗУ через sysctl.", "en": "vfs_cache_pressure tells the kernel how aggressively to free directory/file cache. Value 50 (instead of 100) keeps the cache longer so files open faster, especially with many files. Applies IMMEDIATELY via sysctl."},
+    "sysctl_numa": {"ru": "kernel.numa_balancing автоматически переносит страницы памяти между ядрами CPU (полезно на серверах с NUMA). На домашних ПК это чаще вредит: миграция вызывает паузы. Отключение (0) убирает паузы. Применяется СРАЗУ через sysctl.", "en": "kernel.numa_balancing automatically migrates memory pages between CPU cores (useful on NUMA servers). On home PCs it usually hurts: migration causes stalls. Disabling (0) removes stalls. Applies IMMEDIATELY via sysctl."},
+    "reisub": {"ru": "kernel.sysrq=244 разрешает аварийные функции ядра Magic SysRq, из которых состоит последовательность REISUB: R (вернуть клавиатуру), E/I (корректно завершить/убить процессы), S (синхронизация дисков), U (remount read-only), B (перезагрузка). При полном зависании удерживайте Alt+PrtSc и нажимайте R E I S U B по порядку с интервалом 1–2 с — система перезагрузится безопасно, без повреждения файлов. Маска 244 не включает опасные отладочные функции. Применяется СРАЗУ.", "en": "kernel.sysrq=244 enables the Magic SysRq emergency functions that make up REISUB: R (unraw keyboard), E/I (terminate/kill processes), S (sync disks), U (remount read-only), B (reboot). On a full freeze hold Alt+PrtSc and press R E I S U B in order 1–2 s apart — the system reboots safely without file corruption. Mask 244 excludes dangerous debug functions. Applies IMMEDIATELY."},
+    "ntsync": {"ru": "ntsync — новый модуль ядра, ускоряющий синхронизацию потоков в Wine/Proton: игры под Windows используют много примитивов синхронизации, и ntsync делает их быстрее (заметный прирост FPS в части игр). Требуется ядро 6.14+ или патченное. Если модуль доступен — применяется СРАЗУ; иначе автозагрузка включится после обновления ядра и перезагрузки.", "en": "ntsync is a new kernel module speeding up thread synchronization in Wine/Proton: Windows games use many sync primitives and ntsync makes them faster (noticeable FPS gain in some games). Needs kernel 6.14+ or patched. If the module is available it applies IMMEDIATELY; otherwise autoload activates after a kernel update and reboot."},
+    "ntfs3": {"ru": "ntfs3 — современный встроенный драйвер NTFS (быстрый). Linux Mint по умолчанию блокирует его и использует медленный ntfs-3g. Опция снимает блокировку. Уже смонтированные диски перейдут на ntfs3 после перезагрузки (или перемонтирования); новые монтируются сразу быстрым драйвером.", "en": "ntfs3 is the modern in-kernel NTFS driver (fast). Linux Mint blocks it by default and uses slow ntfs-3g. This option lifts the block. Already mounted disks switch to ntfs3 after reboot (or remount); new mounts use the fast driver immediately."},
+    "commit": {"ru": "commit=NN задаёт интервал (в секундах), с которым ext4 сбрасывает метаданные на диск. Больше значение — меньше мелких записей и меньше износа SSD, но чуть выше риск потери последних метаданных при внезапном отключении питания. По умолчанию 60. Записывается в /etc/fstab, ВСТУПАЕТ В СИЛУ ПОСЛЕ ПЕРЕЗАГРУЗКИ.", "en": "commit=NN sets the interval (seconds) at which ext4 flushes metadata to disk. Higher value — fewer small writes and less SSD wear, but slightly higher risk of losing last metadata on sudden power loss. Default 60. Written to /etc/fstab, TAKES EFFECT AFTER A REBOOT."},
+    "aliases": {"ru": "Добавляет в ваш .bashrc готовые команды: upd (обновить списки), upgr (обновить пакеты), update_all (полное обновление), clean (очистка), space (место на диске), mem (очистка памяти) и другие. Появятся в НОВЫХ терминалах (или после команды source ~/.bashrc). Перезагрузка не нужна.", "en": "Adds ready commands to your .bashrc: upd (update lists), upgr (upgrade packages), update_all (full update), clean (cleanup), space (disk free), mem (memory clean) and others. They appear in NEW terminals (or after source ~/.bashrc). No reboot needed."},
+    "autoupdate": {"ru": "Создаёт systemd-таймер, который по выбранному расписанию сам обновляет APT-пакеты и Flatpak. ВАЖНО: отключите встроенное автообновление Mint (mintupdate), иначе обновления будут запускаться дважды и конфликтовать. Таймер включается СРАЗУ после применения.", "en": "Creates a systemd timer that updates APT packages and Flatpak on the chosen schedule. IMPORTANT: disable the built-in Mint auto-update (mintupdate), otherwise updates run twice and conflict. The timer activates IMMEDIATELY after applying."},
+    "mount": {"ru": "Опция монтирования noatime отключает обновление времени последнего доступа к файлам и каталогам (nodiratime — её историческое подмножество, отдельно не требуется). Каждый файл при чтении больше не вызывает служебную запись на диск: меньше износа SSD и быстрее чтение. Записывается в /etc/fstab, ВСТУПАЕТ В СИЛУ ПОСЛЕ ПЕРЕЗАГРУЗКИ. Откат убирает опцию из fstab.", "en": "The noatime mount option disables updating last-access times for files and directories (nodiratime is its historical subset, not needed separately). Each read no longer causes a service write to disk: less SSD wear and faster reads. Written to /etc/fstab, TAKES EFFECT AFTER A REBOOT. Rollback removes the option from fstab."},
+    "steam": {"ru": "Игры Steam под Proton хранят данные (префиксы) в ~/.steam/steam/steamapps/compatdata. Если библиотека Steam лежит на другом диске (NTFS), игра не находит эти данные и может не запускаться или терять сохранения. Симлинк compatdata в библиотеке указывает на домашнюю папку, и игры работают корректно. Действует СРАЗУ; если compatdata уже существует как каталог с данными — он не трогается.", "en": "Steam Proton games store data (prefixes) in ~/.steam/steam/steamapps/compatdata. If a Steam library is on another disk (NTFS), games cannot find this data and may fail to start or lose saves. A compatdata symlink in the library points to the home folder so games work correctly. Takes effect IMMEDIATELY; if compatdata already exists as a data directory it is left untouched."},
 }
 
 SERVICES_META = {
@@ -229,7 +231,7 @@ STR = {
         "tab_tune": "Тюнинг", "tab_serv": "Службы", "tab_stat": "Статус",
         "btn_apply": "Применить выбранное", "btn_rollback": "Откатить выбранное",
         "btn_selall": "Выбрать все", "btn_selnone": "Снять выделение",
-        "btn_export": "Экспорт", "btn_about": "О твикере",
+        "btn_about": "О твикере",
         "theme_dark": "Тёмная тема", "theme_light": "Светлая тема",
         "lbl_dry": "Сухой прогон", "lbl_terminal": "Терминальный вывод:",
         "lbl_debug": "Отладка",
@@ -237,6 +239,9 @@ STR = {
         "ready": "Готово", "running": "Выполнение...", "done": "Готово",
         "applied_yes": "✓ применено", "applied_no": "не применено",
         "btn_file": "файл", "btn_q": "?",
+        "reboot_note": "⟳ перезагрузка",
+        "thp_cur": "сейчас: %s",
+        "kern_thp": "прозрачные огромные страницы",
         "menu_copy": "Копировать", "menu_copy_all": "Копировать всё",
         "menu_select_all": "Выделить всё",
         "svc_name": "Служба", "svc_state": "Состояние", "svc_run": "Запуск",
@@ -280,7 +285,6 @@ STR = {
         "about_title": "О твикере",
         "about_purpose": "Графическая оболочка тюнинга для Linux Mint / Ubuntu / Debian и других systemd-дистрибутивов: твики производительности, логов, дисков, сети и игр с откатом и бэкапами.",
         "about_author": "Автор", "about_author_name": "Дмитрий Свистунов",
-        "about_ver": "Версия",
         "msg_run": "Скрипт уже запущен. Дождитесь завершения.",
         "msg_noopt": "Отметьте хотя бы одну опцию.",
         "msg_sel": "Сначала выберите строки в таблице.",
@@ -291,7 +295,7 @@ STR = {
         "tab_tune": "Tuning", "tab_serv": "Services", "tab_stat": "Status",
         "btn_apply": "Apply selected", "btn_rollback": "Rollback selected",
         "btn_selall": "Select all", "btn_selnone": "Deselect",
-        "btn_export": "Export", "btn_about": "About",
+        "btn_about": "About",
         "theme_dark": "Dark theme", "theme_light": "Light theme",
         "lbl_dry": "Dry run", "lbl_terminal": "Terminal output:",
         "lbl_debug": "Debug",
@@ -299,6 +303,9 @@ STR = {
         "ready": "Ready", "running": "Running...", "done": "Done",
         "applied_yes": "✓ applied", "applied_no": "not applied",
         "btn_file": "file", "btn_q": "?",
+        "reboot_note": "⟳ reboot",
+        "thp_cur": "now: %s",
+        "kern_thp": "transparent huge pages",
         "menu_copy": "Copy", "menu_copy_all": "Copy all",
         "menu_select_all": "Select all",
         "svc_name": "Service", "svc_state": "State", "svc_run": "Running",
@@ -342,7 +349,6 @@ STR = {
         "about_title": "About",
         "about_purpose": "A graphical tuning shell for Linux Mint / Ubuntu / Debian and other systemd distributions: performance, logs, disk, network and gaming tweaks with rollback and backups.",
         "about_author": "Author", "about_author_name": "Dmitry Svistunov",
-        "about_ver": "Version",
         "msg_run": "A job is already running. Wait for it to finish.",
         "msg_noopt": "Tick at least one option.",
         "msg_sel": "Select table rows first.",
@@ -526,15 +532,6 @@ def make_icon(kind, size=48, accent="#4ec9b0", fg="#d4d4d4"):
         p.setPen(QPen(QColor("#ffffff"), size * 0.06))
         for y in (0.35, 0.5, 0.65):
             p.drawLine(int(size * 0.35), int(size * y), int(size * 0.65), int(size * y))
-    elif kind == "export":
-        p.setPen(QPen(QColor(accent), size * 0.1))
-        p.drawLine(int(size * 0.5), int(size * 0.2), int(size * 0.5), int(size * 0.6))
-        path = QPainterPath()
-        path.moveTo(size * 0.32, size * 0.45)
-        path.lineTo(size * 0.5, size * 0.65)
-        path.lineTo(size * 0.68, size * 0.45)
-        p.drawPath(path)
-        p.drawLine(int(size * 0.25), int(size * 0.78), int(size * 0.75), int(size * 0.78))
     elif kind == "help":
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QColor(accent))
@@ -949,21 +946,20 @@ class SystemOps:
                 orig = parts.copy()
                 parts += [x for x in params if x not in parts]
                 if parts != orig:
-                    new_lines_val = 'GRUB_CMDLINE_LINUX_DEFAULT="' + " ".join(parts) + '"'
-                    new_lines.append(new_lines_val)
+                    lines.append('GRUB_CMDLINE_LINUX_DEFAULT="' + " ".join(parts) + '"')
                     changed = True
                 else:
-                    new_lines.append(line)
+                    lines.append(line)
             else:
-                new_lines.append(line)
+                lines.append(line)
         if not found:
-            new_lines.append('GRUB_CMDLINE_LINUX_DEFAULT="' + " ".join(params) + '"')
+            lines.append('GRUB_CMDLINE_LINUX_DEFAULT="' + " ".join(params) + '"')
             changed = True
         if not changed:
             self.log("GRUB already has params", "info")
             return True
         self.backup_file(path)
-        if self.write_file(path, "\n".join(new_lines) + "\n", backup=False):
+        if self.write_file(path, "\n".join(lines) + "\n", backup=False):
             self.grub_changed = True
             self.log("GRUB: params added", "success")
             return True
@@ -1332,14 +1328,16 @@ class SystemOps:
                 return i, f
         return None, None
 
+    def _dev_of(self, mp):
+        return next((it["dev"] for it in self.mount_items
+                     if mp in it.get("mps", [])), None)
+
     def _mount_opts_edit(self, mp, add=True):
         path = "/etc/fstab"
         content = self.read_file(path)
         if not content:
             self.log("Cannot read /etc/fstab", "error"); return False
-        dev = next((it["dev"] for it in (self.mount_items and sum(
-            ([[x] for x in []] or []), [])) or []), None)
-        dev = next((it["dev"] for it in parse_mounts() if it["mp"] == mp), None)
+        dev = self._dev_of(mp)
         uuid = self._uuid_of(dev) if dev else ""
         lines = lines_in(content)
         idx, parts = self._fstab_find(lines, mp, uuid)
@@ -1368,7 +1366,7 @@ class SystemOps:
         content = self.read_file(path)
         if not content:
             self.log("Cannot read /etc/fstab", "error"); return False
-        dev = next((it["dev"] for it in parse_mounts() if it["mp"] == mp), None)
+        dev = self._dev_of(mp)
         uuid = self._uuid_of(dev) if dev else ""
         lines = lines_in(content)
         idx, parts = self._fstab_find(lines, mp, uuid)
@@ -1417,7 +1415,7 @@ class SystemOps:
         if self.dry_run:
             self.log("[DRY RUN] fstab commit=%s" % val, "warning"); return True
         ok = True
-        for m in getattr(self, "mount_items", []):
+        for m in self.mount_items:
             for mp in m["mps"]:
                 ok = self._mount_commit_edit(mp, val, True) and ok
         if ok:
@@ -1428,7 +1426,7 @@ class SystemOps:
         if self.dry_run:
             self.log("[DRY RUN] fstab remove commit", "warning"); return True
         ok = True
-        for m in getattr(self, "mount_items", []):
+        for m in self.mount_items:
             for mp in m["mps"]:
                 ok = self._mount_commit_edit(mp, "", False) and ok
         if ok:
@@ -1441,7 +1439,7 @@ class SystemOps:
                 content = f.read()
         except Exception:
             return False
-        if not getattr(self, "mount_items", None):
+        if not self.mount_items:
             return False
         for m in self.mount_items:
             found = False
@@ -1901,7 +1899,7 @@ class StripeProgress(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setPen(Qt.PenStyle.NoPen)
         th = self.theme_colors
-        p.setBrush(QColor(th["panel"]))
+        p.setBrush(QColor(th["bg"]))
         p.drawRoundedRect(self.rect(), 7, 7)
         w = int(self.width() * self._value / 100.0)
         if w > 2:
@@ -2045,9 +2043,12 @@ class MainWindow(QMainWindow):
         self.steam_state = {}
         self._tasks = []
         self._ram_cache = None
+        self._info_dlg = None
         self.sched_lbl = None
+        self.thp_lbl = None
         self.debug_enabled = False
         self._debug_fh = None
+        self._debug_lock = threading.Lock()
         self.sudo = SudoManager()
         self.sudo.prompt_password = self._ask_password
         self.sudo.show_error = lambda m: QMessageBox.warning(
@@ -2103,7 +2104,7 @@ class MainWindow(QMainWindow):
         self.sig.toast.connect(self._on_toast)
         self.sig.spawn.connect(self._spawn_task)
         self.build_ui()
-        self.log("%s v%s (build %s) запущен" % (APP_NAME, APP_VERSION, BUILD), "success")
+        self.log("%s v%s запущен" % (APP_NAME, APP_VERSION), "success")
         self.log("GPU: %s %s" % (self.state.gpu, self.state.gpu_model), "info")
         if self.state.user_name == "root":
             self.log("Running as root: user-specific tweaks (.bashrc, PipeWire, Steam) "
@@ -2130,11 +2131,12 @@ class MainWindow(QMainWindow):
         if not self.debug_enabled or self._debug_fh is None:
             return
         try:
-            ts = time.strftime("%Y-%m-%d %H:%M:%S")
-            self._debug_fh.write("[%s] %s\n" % (ts, msg))
-            if tb_obj:
-                traceback.print_exception(*tb_obj, file=self._debug_fh)
-            self._debug_fh.flush()
+            with self._debug_lock:
+                ts = time.strftime("%Y-%m-%d %H:%M:%S")
+                self._debug_fh.write("[%s] %s\n" % (ts, msg))
+                if tb_obj:
+                    traceback.print_exception(*tb_obj, file=self._debug_fh)
+                self._debug_fh.flush()
         except Exception:
             pass
 
@@ -2144,7 +2146,7 @@ class MainWindow(QMainWindow):
             try:
                 self._debug_fh = open(self.debug_log_path, "a", encoding="utf-8")
                 self._debug_fh.write("\n=== BUILD %s | session start %s ===\n"
-                                     % (BUILD, time.strftime("%Y-%m-%d %H:%M:%S")))
+                                     % (APP_VERSION, time.strftime("%Y-%m-%d %H:%M:%S")))
                 self._debug_fh.flush()
                 self.log("Debug log: %s" % self.debug_log_path, "info")
             except Exception as e:
@@ -2154,9 +2156,10 @@ class MainWindow(QMainWindow):
         else:
             if self._debug_fh:
                 try:
-                    self._debug_fh.write("=== session end %s ===\n"
-                                         % time.strftime("%Y-%m-%d %H:%M:%S"))
-                    self._debug_fh.close()
+                    with self._debug_lock:
+                        self._debug_fh.write("=== session end %s ===\n"
+                                             % time.strftime("%Y-%m-%d %H:%M:%S"))
+                        self._debug_fh.close()
                 except Exception:
                     pass
             self._debug_fh = None
@@ -2295,6 +2298,15 @@ class MainWindow(QMainWindow):
         except Exception:
             return ""
 
+    def _thp_current(self):
+        try:
+            with open("/sys/kernel/mm/transparent_hugepage/enabled", "r",
+                      encoding="utf-8", errors="replace") as f:
+                m = re.search(r"\[(\w+)\]", f.read())
+                return m.group(1) if m else ""
+        except Exception:
+            return ""
+
     def _disk_info(self, path):
         try:
             st = os.statvfs(path)
@@ -2337,7 +2349,7 @@ class MainWindow(QMainWindow):
         title = QLabel(APP_NAME)
         title.setStyleSheet("font-size: 20px; font-weight: bold; color: %s;" % c["accent"])
         head.addWidget(title)
-        ver = QLabel("v%s (%s)" % (APP_VERSION, BUILD))
+        ver = QLabel("v" + APP_VERSION)
         ver.setStyleSheet("color: %s;" % c["gray"])
         head.addWidget(ver)
         head.addStretch(1)
@@ -2351,24 +2363,18 @@ class MainWindow(QMainWindow):
         self.theme_btn = QPushButton()
         self.theme_btn.clicked.connect(self.toggle_theme)
         head.addWidget(self.theme_btn)
+        self.about_btn = QPushButton()
+        self.about_btn.setIcon(QIcon(make_icon("help", 26, c["yellow"])))
+        self.about_btn.setFixedSize(34, 34)
+        self.about_btn.setToolTip(self.t("btn_about"))
+        self.about_btn.clicked.connect(self.show_about)
+        head.addWidget(self.about_btn)
         root.addLayout(head)
         self.tabs = QTabWidget()
         root.addWidget(self.tabs, 1)
         self._build_tune(c)
         self._build_serv(c)
         self._build_stat(c)
-        bar = QHBoxLayout()
-        bar.setSpacing(8)
-        bar.addStretch(1)
-        ab = QPushButton(self.t("btn_about"))
-        ab.setIcon(QIcon(make_icon("help", 36, c["yellow"])))
-        ab.clicked.connect(self.show_about)
-        bar.addWidget(ab)
-        ex = QPushButton(self.t("btn_export"))
-        ex.setIcon(QIcon(make_icon("export", 36, c["blue"])))
-        ex.clicked.connect(self.export_config)
-        bar.addWidget(ex)
-        root.addLayout(bar)
         tl = QLabel(self.t("lbl_terminal"))
         tl.setStyleSheet("color: %s;" % c["gray"])
         root.addWidget(tl)
@@ -2495,6 +2501,9 @@ class MainWindow(QMainWindow):
             combo.setCurrentText(self.thp_value)
             combo.currentTextChanged.connect(lambda v: setattr(self, "thp_value", v))
             top.addWidget(combo)
+            self.thp_lbl = QLabel(self.t("thp_cur") % (self._thp_current() or "?"))
+            self.thp_lbl.setStyleSheet("color: %s;" % c["gray"])
+            top.addWidget(self.thp_lbl)
         elif key == "autoupdate":
             top.addWidget(QLabel(self.t("lbl_schedule")))
             combo = QComboBox()
@@ -2508,9 +2517,13 @@ class MainWindow(QMainWindow):
         badge = QLabel("…")
         top.addWidget(badge)
         self.badges[key] = badge
+        if key in REBOOT_KEYS:
+            rn = QLabel(self.t("reboot_note"))
+            rn.setStyleSheet("color: %s; font-weight: bold;" % c["yellow"])
+            top.addWidget(rn)
         fb = QPushButton(self.t("btn_file"))
-        fb.setIcon(QIcon(make_icon("file", 30, c["blue"])))
-        fb.setFixedHeight(26)
+        fb.setIcon(QIcon(make_icon("file", 20, c["blue"])))
+        fb.setFixedHeight(28)
         fb.clicked.connect(lambda _c, k=key: self.open_option_file(k))
         top.addWidget(fb)
         qb = QPushButton(self.t("btn_q"))
@@ -2538,8 +2551,8 @@ class MainWindow(QMainWindow):
             h.setStyleSheet("color: %s; font-weight: bold; font-size: 13px;" % c["yellow"])
             hh.addWidget(h)
             fb = QPushButton(self.t("btn_file"))
-            fb.setIcon(QIcon(make_icon("file", 30, c["blue"])))
-            fb.setFixedHeight(24)
+            fb.setIcon(QIcon(make_icon("file", 18, c["blue"])))
+            fb.setFixedHeight(26)
             fb.clicked.connect(lambda _c: self._open_path("/etc/fstab"))
             hh.addWidget(fb)
             qb = QPushButton(self.t("btn_q"))
@@ -2686,6 +2699,27 @@ class MainWindow(QMainWindow):
         if cur.hasSelection():
             QApplication.clipboard().setText(cur.selectedText())
 
+    def _make_browser(self):
+        te = QTextBrowser()
+        te.setReadOnly(True)
+        te.setOpenExternalLinks(False)
+        te.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        te.customContextMenuRequested.connect(lambda p, w=te: self._menu_for(w, p))
+        te.anchorClicked.connect(self._open_url)
+        return te
+
+    def _open_url(self, url):
+        u = url.toString()
+        for cmd in (["xdg-open", u], ["gio", "open", u]):
+            try:
+                subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL,
+                                 start_new_session=True, env=self._host_env())
+                return
+            except Exception:
+                continue
+        self.log("Cannot open URL: %s" % u, "error")
+
     def _show_option_help(self, key):
         try:
             txt = OPTIONS_HELP.get(key, {}).get(self.lang, "")
@@ -2710,10 +2744,17 @@ class MainWindow(QMainWindow):
 
     def _open_info_dialog(self, title, html):
         c = self.colors()
+        if self._info_dlg is not None:
+            try:
+                self._info_dlg.close()
+            except Exception:
+                pass
         dlg = DraggableDialog(self)
         dlg.setObjectName("infodlg")
-        dlg.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
-        dlg.setModal(True)
+        dlg.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        dlg.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        dlg.setAutoFillBackground(False)
+        self._info_dlg = dlg
         dlg.resize(min(720, self.screen_w - 60), min(560, self.screen_h - 80))
         vl = QVBoxLayout(dlg)
         vl.setContentsMargins(14, 14, 14, 14)
@@ -2728,20 +2769,25 @@ class MainWindow(QMainWindow):
         cb.clicked.connect(dlg.close)
         hd.addWidget(cb)
         vl.addLayout(hd)
-        te = QTextBrowser()
-        te.setReadOnly(True)
-        te.setOpenExternalLinks(True)
+        te = self._make_browser()
         te.setHtml(html)
         vl.addWidget(te)
-        dlg.exec()
+        dlg.show()
 
     def show_about(self):
         c = self.colors()
+        if self._info_dlg is not None:
+            try:
+                self._info_dlg.close()
+            except Exception:
+                pass
         dlg = DraggableDialog(self)
         dlg.setObjectName("infodlg")
-        dlg.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
-        dlg.setModal(True)
-        dlg.resize(min(640, self.screen_w - 60), min(460, self.screen_h - 80))
+        dlg.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        dlg.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        dlg.setAutoFillBackground(False)
+        self._info_dlg = dlg
+        dlg.resize(min(640, self.screen_w - 60), min(420, self.screen_h - 80))
         vl = QVBoxLayout(dlg)
         vl.setContentsMargins(18, 18, 18, 18)
         hd = QHBoxLayout()
@@ -2755,23 +2801,19 @@ class MainWindow(QMainWindow):
         cb.clicked.connect(dlg.close)
         hd.addWidget(cb)
         vl.addLayout(hd)
-        te = QTextBrowser()
-        te.setReadOnly(True)
-        te.setOpenExternalLinks(True)
+        te = self._make_browser()
         html = ('<div style="font-family: monospace;">'
                 '<h2 style="color:%s;">%s v%s</h2>'
-                '<p><b>%s:</b> %s (build %s)</p>'
                 '<p>%s</p>'
                 '<p><b>%s:</b> %s</p>'
                 '<p><a href="%s">%s</a></p></div>'
                 % (c["accent"], APP_NAME, APP_VERSION,
-                   self.t("about_ver"), APP_VERSION, BUILD,
                    self.t("about_purpose"),
                    self.t("about_author"), self.t("about_author_name"),
                    GITHUB_URL, GITHUB_URL))
         te.setHtml(html)
         vl.addWidget(te)
-        dlg.exec()
+        dlg.show()
 
     def _open_path(self, path):
         ops = SystemOps(self.sudo, self.state, lambda m, t: None, True)
@@ -3416,6 +3458,13 @@ class MainWindow(QMainWindow):
                 kn_rows.append("<tr><td style='color:%s;'><b>%s</b></td><td style='color:%s;'><b>%s</b></td><td style='color:%s;'>%s</td><td style='color:%s;'><b>%s</b></td></tr>" % (
                     col("fg"), esc(p), col("fg"), esc(vals[p]), col("gray"), esc(dsc),
                     cc, self.t("yes") if ok else self.t("no")))
+            thp_cur = self._thp_current() or "n/a"
+            thp_ok = A.get("thp", False)
+            kn_rows.append("<tr><td style='color:%s;'><b>%s</b></td><td style='color:%s;'><b>%s</b></td><td style='color:%s;'>%s</td><td style='color:%s;'><b>%s</b></td></tr>" % (
+                col("fg"), esc("transparent_hugepage"), col("fg"), esc(thp_cur),
+                col("gray"), esc(self.t("kern_thp")),
+                col("green") if thp_ok else col("red"),
+                self.t("yes") if thp_ok else self.t("no")))
             timer = ops.service_enabled("biweekly-upgrade.timer")
             tcc = col("green") if timer == "enabled" else col("gray")
             kn_rows.append("<tr><td style='color:%s;'><b>%s</b></td><td style='color:%s;'><b>%s</b></td><td colspan='2'></td></tr>" % (
@@ -3425,8 +3474,7 @@ class MainWindow(QMainWindow):
             self.sig.status_html.emit("".join(P))
         except Exception as e:
             traceback.print_exc()
-            self._debug_write("STATUS CRASH: %s" % e,
-                              tb_obj=sys.exc_info())
+            self._debug_write("STATUS CRASH: %s" % e, tb_obj=sys.exc_info())
             try:
                 c = self.colors()
                 self.sig.status_html.emit(
@@ -3471,6 +3519,8 @@ class MainWindow(QMainWindow):
             pill(b, self.mount_applied.get(k, False))
         for k, b in self.steam_badges.items():
             pill(b, self.steam_applied.get(k, False))
+        if self.thp_lbl is not None:
+            self.thp_lbl.setText(self.t("thp_cur") % (self._thp_current() or "?"))
 
     def _on_log(self, msg, tag):
         c = self.colors()
@@ -3555,6 +3605,7 @@ class MainWindow(QMainWindow):
         self.steam_badges = {}
         self.option_widgets = {}
         self.sched_lbl = None
+        self.thp_lbl = None
         old = self.centralWidget()
         if old is not None:
             old.hide()
@@ -3596,38 +3647,14 @@ class MainWindow(QMainWindow):
             if w is not None:
                 w.setEnabled(False)
             self.opts_state["ntfs3"] = False
-
-    def export_config(self):
-        selected = [k for k, v in self.opts_state.items() if v]
-        if not selected:
-            QMessageBox.information(self, APP_NAME, self.t("msg_noopt"))
-            return
-        path, _ = QFileDialog.getSaveFileName(self, self.t("btn_export"),
-                                              os.path.expanduser("~/tweaker-config.txt"),
-                                              "Text files (*.txt)")
-        if not path:
-            return
-        try:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write("%s v%s (build %s)\n%s\ndry_run=%s\n\n"
-                        % (APP_NAME, APP_VERSION, BUILD,
-                           time.strftime("%Y-%m-%d %H:%M:%S"),
-                           self.dry_check.isChecked()))
-                for k in selected:
-                    f.write("%s: %s\n" % (k, self.om(k)[0]))
-                for m in self.mount_items:
-                    if self.mount_state.get(m["mps"][0]):
-                        f.write("mount: %s\n" % ", ".join(m["mps"]))
-                for lib in self.steam_items:
-                    if self.steam_state.get(lib):
-                        f.write("steam: %s\n" % lib)
-                f.write("\n[parameters]\ncorectrl_group=%s\nswap_value=%s\n"
-                        "commit_value=%s\nthp_value=%s\nupdate_schedule=%s\n"
-                        % (self.corectrl_group, self.swap_value, self.commit_value,
-                           self.thp_value, self.schedule_value))
-            self.log("Config saved: %s" % path, "success")
-        except Exception as e:
-            QMessageBox.warning(self, APP_NAME, str(e))
+        gen_ok = any(os.path.exists(p) for p in (
+            "/usr/lib/systemd/system-generators/zram-generator",
+            "/lib/systemd/system-generators/zram-generator"))
+        if not gen_ok:
+            w = self.option_widgets.get("zram")
+            if w is not None:
+                w.setEnabled(False)
+            self.opts_state["zram"] = False
 
     def closeEvent(self, e):
         if self.is_running:
@@ -3637,9 +3664,10 @@ class MainWindow(QMainWindow):
                 return
         if self._debug_fh:
             try:
-                self._debug_fh.write("=== session end %s ===\n"
-                                     % time.strftime("%Y-%m-%d %H:%M:%S"))
-                self._debug_fh.flush()
+                with self._debug_lock:
+                    self._debug_fh.write("=== session end %s ===\n"
+                                         % time.strftime("%Y-%m-%d %H:%M:%S"))
+                    self._debug_fh.flush()
             except Exception:
                 pass
         e.accept()
@@ -3669,7 +3697,7 @@ QComboBox::drop-down { border: none; width: 22px; }
 QTableWidget { background: {panel}; color: {fg}; gridline-color: {border}; border: 1px solid {border}; border-radius: 10px; }
 QTableWidget::item:selected { background: {sel}; }
 QHeaderView::section { background: {tab}; color: {fg}; padding: 7px; border: none; border-right: 1px solid {border}; }
-QTextEdit { background: {terminal}; color: {terminal_fg}; border: 1px solid {border}; border-radius: 10px; }
+QTextEdit, QTextBrowser { background: {terminal}; color: {terminal_fg}; border: 1px solid {border}; border-radius: 10px; }
 QScrollBar:vertical { background: {panel}; width: 10px; border-radius: 5px; }
 QScrollBar::handle:vertical { background: {scroll}; border-radius: 5px; min-height: 24px; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
@@ -3690,8 +3718,8 @@ QDialog#infodlg { background: {panel}; border: 2px solid {accent}; border-radius
 
 def main():
     if "--help" in sys.argv or "-h" in sys.argv:
-        print("%s v%s (build %s)\npython3 linux_tweaker.py [--dry-run]"
-              % (APP_NAME, APP_VERSION, BUILD))
+        print("%s v%s\npython3 linux_tweaker.py [--dry-run]"
+              % (APP_NAME, APP_VERSION))
         sys.exit(0)
     if os.geteuid() == 0:
         print("WARNING: Linux Tweaker should be run as a normal user, not as root. "
