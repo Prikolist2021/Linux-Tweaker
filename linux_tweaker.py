@@ -14,7 +14,7 @@ from PyQt6.QtGui import (QIcon, QPixmap, QPainter, QColor, QPen, QBrush,
                          QPainterPath, QLinearGradient, QTransform, QTextCursor)
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget,
                              QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-                             QCheckBox, QLineEdit, QComboBox, QTextEdit,
+                             QCheckBox, QLineEdit, QComboBox, QTextEdit, QTextBrowser,
                              QTableWidget, QTableWidgetItem, QAbstractItemView,
                              QHeaderView, QScrollArea, QFrame, QInputDialog,
                              QMessageBox, QFileDialog, QMenu, QDialog,
@@ -249,6 +249,8 @@ STR = {
         "st_hw": "ИНФОРМАЦИЯ О СИСТЕМЕ", "st_parts": "РАЗДЕЛЫ СИСТЕМЫ",
         "st_tweaks": "ТВИКИ", "st_services": "СЛУЖБЫ", "st_kernel": "ПАРАМЕТРЫ ЯДРА",
         "st_timer": "Таймер автообновлений",
+        "st_enabled": "включён", "st_disabled": "отключён",
+        "st_masked": "заблокирован", "st_notfound": "не найден",
         "part_mount": "Раздел", "part_fs": "ФС", "part_total": "Всего",
         "part_free": "Свободно",
         "os_lbl": "ОС", "gpu_lbl": "Видеокарта", "screen_lbl": "Разрешение экрана",
@@ -308,6 +310,8 @@ STR = {
         "st_hw": "SYSTEM INFORMATION", "st_parts": "SYSTEM PARTITIONS",
         "st_tweaks": "TWEAKS", "st_services": "SERVICES", "st_kernel": "KERNEL PARAMETERS",
         "st_timer": "Auto-update timer",
+        "st_enabled": "enabled", "st_disabled": "disabled",
+        "st_masked": "blocked", "st_notfound": "not found",
         "part_mount": "Partition", "part_fs": "FS", "part_total": "Total",
         "part_free": "Free",
         "os_lbl": "OS", "gpu_lbl": "GPU", "screen_lbl": "Screen resolution",
@@ -2670,7 +2674,7 @@ class MainWindow(QMainWindow):
         cb.clicked.connect(dlg.close)
         hd.addWidget(cb)
         vl.addLayout(hd)
-        te = QTextEdit()
+        te = QTextBrowser()
         te.setReadOnly(True)
         te.setOpenExternalLinks(True)
         html = ('<div style="font-family: monospace;">'
