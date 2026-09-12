@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Linux Tweaker v0.03
+Linux Tweaker v0.04
 Графическая оболочка тюнинга Linux Mint / Ubuntu / Debian на PyQt6.
-RU/EN, светлая/тёмная тема, анимации, детект применённых настроек,
+RU/EN, светлая/тёмная тема, детект применённых настроек,
 откат, бэкапы, mount-опции noatime/nodiratime, симлинки compatdata Steam.
 """
 import sys, os, re, subprocess, time, shutil, glob, pwd, grp, threading, traceback
@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget,
                              QGraphicsOpacityEffect)
 
 APP_NAME = "Linux Tweaker"
-APP_VERSION = "0.03"
+APP_VERSION = "0.04"
 
 THEMES = {
     "light": {"bg": "#f5f5f5", "panel": "#ffffff", "fg": "#1e1e1e", "gray": "#616161",
@@ -218,7 +218,7 @@ STR = {
         "steam_title": "Steam: симлинки compatdata",
         "steam_desc": "Создаст ссылку compatdata на ~/.steam/steam/steamapps/compatdata для библиотек Steam на NTFS-разделах, чтобы игры видели данные Proton/Wine из домашней папки.",
         "mount_short": "параметры монтирования", "steam_short": "симлинк compatdata",
-        "kern_sw": "охота сбрасывать память в swap",
+        "kern_sw": "насколько охотно система выгружает память в swap (меньше значение — реже)",
         "kern_vfs": "кэш файлов в памяти",
         "kern_numa": "миграция памяти между ядрами",
         "sudo_title": "sudo", "sudo_prompt": "Пароль sudo (попытка %d из 3):",
@@ -303,7 +303,7 @@ STR = {
         "steam_title": "Steam: compatdata symlinks",
         "steam_desc": "Creates a compatdata symlink to ~/.steam/steam/steamapps/compatdata for Steam libraries on NTFS partitions so games can see Proton/Wine data from the home folder.",
         "mount_short": "mount options", "steam_short": "compatdata symlink",
-        "kern_sw": "eagerness to swap memory",
+        "kern_sw": "how eagerly the system moves memory to swap (lower = less often)",
         "kern_vfs": "file cache in RAM",
         "kern_numa": "memory migration between cores",
         "sudo_title": "sudo", "sudo_prompt": "sudo password (attempt %d of 3):",
@@ -653,8 +653,6 @@ class SudoManager:
                     subprocess.run(["sudo", "-n", "-v"], capture_output=True, timeout=5)
                 except Exception:
                     pass
-            self._keepalive = False
-            self.authenticated = False
         threading.Thread(target=loop, daemon=True).start()
 
 
@@ -1045,10 +1043,10 @@ class SystemOps:
             self.log("RAID detected, skipping", "warning"); return True
         return self.add_grub_params(["raid=noautodetect"])
 
-    def _polkit_new(self):
+    def _polkit_is_new(self):
         try:
-            res = subprocess.run(["pkaction", "--version"], capture_output=True,
-                                 text=True, timeout=5)
+            res = subprocess.run(["pkaction", "--version"],
+                                 capture_output=True, text=True, timeout=5)
             m = re.search(r"(\d+)\.(\d+)", (res.stdout or "") + (res.stderr or ""))
             if m:
                 return int(m.group(1)) > 0 or int(m.group(2)) >= 106
@@ -1296,7 +1294,8 @@ class SystemOps:
         if spices:
             block.append("    cinnamon-spice-updater --update-all")
         block += ['    echo "Done."', "}", ""]
-        block += ['inst() { sudo apt install "$@"; }',
+        block += ["# Дополнительные команды (system-tuneup)",
+                  'inst() { sudo apt install "$@"; }',
                   'remove() { sudo apt purge --autoremove "$@"; }',
                   'search() { apt search "$@"; }', 'info() { apt show "$@"; }', ""]
         block += ["clean() {", "    sudo apt autoremove -y && sudo apt autoclean && sudo apt clean", "}", ""]
@@ -1883,7 +1882,6 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(600, lambda: self._spawn_task(self._applied_work))
         QTimer.singleShot(900, lambda: self._spawn_task(self._status_work))
 
-    # ─── helpers ───
     def t(self, k):
         return STR[self.lang][k]
 
@@ -1948,7 +1946,8 @@ class MainWindow(QMainWindow):
             try:
                 res = subprocess.run(["nvidia-smi", "--query-gpu=driver_version",
                                       "--format=csv,noheader"],
-                                     capture_output=True, text=True, timeout=5)
+                                     capture_output=True, text=True,
+                                     timeout=5, env=self._host_env())
                 if res.returncode == 0 and res.stdout.strip():
                     ver = res.stdout.strip().splitlines()[0]
             except Exception:
@@ -1964,7 +1963,8 @@ class MainWindow(QMainWindow):
 
     def _mesa_version(self):
         try:
-            res = subprocess.run(["glxinfo"], capture_output=True, text=True, timeout=5)
+            res = subprocess.run(["glxinfo"], capture_output=True, text=True,
+                                 timeout=5, env=self._host_env())
             if res.returncode == 0:
                 m = re.search(r"Mesa\s+([0-9][0-9a-zA-Z.\-+]*)", res.stdout)
                 if m:
@@ -2048,10 +2048,14 @@ class MainWindow(QMainWindow):
         t.start()
         return t
 
+    def _host_env(self):
+        return {k: v for k, v in os.environ.items()
+                if k not in ("LD_LIBRARY_PATH", "LD_PRELOAD", "PYTHONPATH",
+                             "PYTHONHOME", "APPDIR", "APPIMAGE")}
+
     def log(self, msg, tag="normal"):
         self.sig.log.emit(msg, tag)
 
-    # ─── UI ──
     def build_ui(self):
         c = self.colors()
         qss = QSS
@@ -2096,21 +2100,6 @@ class MainWindow(QMainWindow):
         self._build_stat(c)
         bar = QHBoxLayout()
         bar.setSpacing(8)
-        self.apply_btn = QPushButton(self.t("btn_apply"))
-        self.apply_btn.setObjectName("accent")
-        self.apply_btn.setIcon(QIcon(make_icon("apply", 36, c["accent"], c["accent_fg"])))
-        self.apply_btn.clicked.connect(self.apply_selected)
-        bar.addWidget(self.apply_btn)
-        rb = QPushButton(self.t("btn_rollback"))
-        rb.setIcon(QIcon(make_icon("rollback", 36, c["orange"])))
-        rb.clicked.connect(self.rollback_selected)
-        bar.addWidget(rb)
-        sa = QPushButton(self.t("btn_selall"))
-        sa.clicked.connect(self.select_all_options)
-        bar.addWidget(sa)
-        sn = QPushButton(self.t("btn_selnone"))
-        sn.clicked.connect(self.reset_options)
-        bar.addWidget(sn)
         bar.addStretch(1)
         ab = QPushButton(self.t("btn_about"))
         ab.setIcon(QIcon(make_icon("help", 36, c["yellow"])))
@@ -2153,6 +2142,25 @@ class MainWindow(QMainWindow):
                          self.t("tab_tune"))
         lay = QVBoxLayout(tab)
         lay.setContentsMargins(8, 8, 8, 8)
+        bar = QHBoxLayout()
+        bar.setSpacing(8)
+        self.apply_btn = QPushButton(self.t("btn_apply"))
+        self.apply_btn.setObjectName("accent")
+        self.apply_btn.setIcon(QIcon(make_icon("apply", 36, c["accent"], c["accent_fg"])))
+        self.apply_btn.clicked.connect(self.apply_selected)
+        bar.addWidget(self.apply_btn)
+        rb = QPushButton(self.t("btn_rollback"))
+        rb.setIcon(QIcon(make_icon("rollback", 36, c["orange"])))
+        rb.clicked.connect(self.rollback_selected)
+        bar.addWidget(rb)
+        sa = QPushButton(self.t("btn_selall"))
+        sa.clicked.connect(self.select_all_options)
+        bar.addWidget(sa)
+        sn = QPushButton(self.t("btn_selnone"))
+        sn.clicked.connect(self.reset_options)
+        bar.addWidget(sn)
+        bar.addStretch(1)
+        lay.addLayout(bar)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -2371,7 +2379,6 @@ class MainWindow(QMainWindow):
             lambda p: self._menu_for(self.stat_view, p))
         lay.addWidget(self.stat_view, 1)
 
-    # ─── menus / copy ───
     def _menu_for(self, w, pos):
         menu = QMenu(self)
         a1 = menu.addAction(self.t("menu_copy"))
@@ -2400,8 +2407,9 @@ class MainWindow(QMainWindow):
         tl.setStyleSheet("font-size: 16px; font-weight: bold; color: %s;" % c["accent"])
         hd.addWidget(tl)
         hd.addStretch(1)
-        cb = QPushButton("✕")
+        cb = QPushButton("×")
         cb.setFixedSize(28, 28)
+        cb.setStyleSheet("font-size: 18px; font-weight: bold;")
         cb.clicked.connect(dlg.close)
         hd.addWidget(cb)
         vl.addLayout(hd)
@@ -2445,7 +2453,6 @@ class MainWindow(QMainWindow):
                                                 .replace(">", "&gt;")))
         self._open_info_dialog(self.t("about_title"), html)
 
-    # ─── actions ──
     def open_option_file(self, key):
         cands = [p.format(home=self.state.user_home) for p in OPTION_FILES.get(key, [])]
         target = next((p for p in cands if os.path.exists(p)), None)
@@ -2468,16 +2475,13 @@ class MainWindow(QMainWindow):
         self._show_viewer(target, content)
 
     def _open_ext(self, path):
-        env = {k: v for k, v in os.environ.items()
-               if k not in ("LD_LIBRARY_PATH", "LD_PRELOAD", "PYTHONPATH",
-                            "PYTHONHOME", "APPDIR", "APPIMAGE")}
         for cmd in (["xed", path], ["mousepad", path], ["gedit", path],
                     ["kate", path], ["pluma", path],
                     ["xdg-open", path], ["gio", "open", path]):
             try:
                 subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
                                  stderr=subprocess.DEVNULL,
-                                 start_new_session=True, env=env)
+                                 start_new_session=True, env=self._host_env())
                 return
             except Exception:
                 continue
@@ -2731,7 +2735,6 @@ class MainWindow(QMainWindow):
                 ops.log("Cannot disable %s" % n, "warning")
         self.sig.spawn.emit(self._services_work)
 
-    # ─── workers ───
     def _applied_work(self):
         ops = SystemOps(self.sudo, self.state, lambda m, t: None, True)
         self.sig.applied.emit(self._detect_applied(ops))
@@ -2783,7 +2786,8 @@ class MainWindow(QMainWindow):
         try:
             res = subprocess.run(["pkcheck", "--action-id",
                                   "org.corectrl.helper.init", "--process",
-                                  str(os.getpid())], capture_output=True, timeout=5)
+                                  str(os.getpid())], capture_output=True,
+                                 timeout=5, env=self._host_env())
             if res.returncode == 0:
                 return True
         except Exception:
@@ -3031,7 +3035,6 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
-    # ─── badges / slots ───
     def _update_badges(self):
         for k, b in self.badges.items():
             ok = self.applied.get(k, False)
@@ -3111,7 +3114,6 @@ class MainWindow(QMainWindow):
     def _on_toast(self, text, kind):
         self.toast_w.show_msg(text, kind, self.colors())
 
-    # ─── theme / lang / rebuild ───
     def toggle_theme(self):
         self.theme = "light" if self.theme == "dark" else "dark"
         self._rebuild()
