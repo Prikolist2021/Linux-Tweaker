@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Linux Tweaker v0.02
+Linux Tweaker v0.03
 Графическая оболочка тюнинга Linux Mint / Ubuntu / Debian на PyQt6.
 RU/EN, светлая/тёмная тема, анимации, детект применённых настроек,
 откат, бэкапы, mount-опции noatime/nodiratime, симлинки compatdata Steam.
 """
 import sys, os, re, subprocess, time, shutil, glob, pwd, grp, threading, traceback
 from PyQt6.QtCore import (Qt, QObject, QThread, pyqtSignal, QTimer,
-                          QPropertyAnimation, QEasingCurve, QRect, QRectF,
-                          QEvent)
+                          QPropertyAnimation, QEasingCurve, QRect, QRectF)
 from PyQt6.QtGui import (QIcon, QPixmap, QPainter, QColor, QPen, QBrush,
                          QPainterPath, QLinearGradient, QTransform, QTextCursor)
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget,
@@ -17,10 +16,11 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget,
                              QCheckBox, QLineEdit, QComboBox, QTextEdit,
                              QTableWidget, QTableWidgetItem, QAbstractItemView,
                              QHeaderView, QScrollArea, QFrame, QInputDialog,
-                             QMessageBox, QFileDialog, QMenu, QDialog)
+                             QMessageBox, QFileDialog, QMenu, QDialog,
+                             QGraphicsOpacityEffect)
 
 APP_NAME = "Linux Tweaker"
-APP_VERSION = "0.02"
+APP_VERSION = "0.03"
 
 THEMES = {
     "light": {"bg": "#f5f5f5", "panel": "#ffffff", "fg": "#1e1e1e", "gray": "#616161",
@@ -202,6 +202,8 @@ STR = {
         "st_hw": "ИНФОРМАЦИЯ О СИСТЕМЕ", "st_tweaks": "ТВИКИ",
         "st_services": "СЛУЖБЫ", "st_kernel": "ПАРАМЕТРЫ ЯДРА",
         "st_timer": "Таймер автообновлений",
+        "st_enabled": "включён", "st_disabled": "отключён",
+        "st_masked": "заблокирован", "st_notfound": "не найден",
         "os_lbl": "ОС", "gpu_lbl": "Видеокарта", "screen_lbl": "Разрешение экрана",
         "swap_lbl": "Файл подкачки", "kernel_lbl": "Ядро", "de_lbl": "Оболочка",
         "ram_lbl": "ОЗУ", "cpu_lbl": "Процессор", "disk_lbl": "Диск",
@@ -285,6 +287,8 @@ STR = {
         "st_hw": "SYSTEM INFORMATION", "st_tweaks": "TWEAKS",
         "st_services": "SERVICES", "st_kernel": "KERNEL PARAMETERS",
         "st_timer": "Auto-update timer",
+        "st_enabled": "enabled", "st_disabled": "disabled",
+        "st_masked": "blocked", "st_notfound": "not found",
         "os_lbl": "OS", "gpu_lbl": "GPU", "screen_lbl": "Screen resolution",
         "swap_lbl": "Swap", "kernel_lbl": "Kernel", "de_lbl": "Desktop",
         "ram_lbl": "RAM", "cpu_lbl": "CPU", "disk_lbl": "Disk",
@@ -756,6 +760,7 @@ class SystemOps:
         self.log = log
         self.dry_run = dry_run
         self.grub_changed = False
+        self._unit_cache = None
         self.backup_dir = os.path.join(state.user_home, "system-tuneup-backups")
 
     def backup_file(self, path):
@@ -893,18 +898,24 @@ class SystemOps:
         return self.write_file(path, "\n".join(new_lines) + "\n",
                                chmod=chmod, mkdir=mkdir, backup=False)
 
+    def unit_names(self):
+        if self._unit_cache is None:
+            try:
+                res = subprocess.run(["systemctl", "list-unit-files",
+                                      "--type=service", "--no-legend", "--no-pager"],
+                                     capture_output=True, text=True, timeout=10)
+                names = set()
+                for line in res.stdout.splitlines():
+                    parts = line.split()
+                    if parts:
+                        names.add(parts[0])
+                self._unit_cache = names
+            except Exception:
+                self._unit_cache = set()
+        return self._unit_cache
+
     def unit_exists(self, name):
-        try:
-            res = subprocess.run(["systemctl", "list-unit-files", name,
-                                  "--no-legend", "--no-pager"],
-                                 capture_output=True, timeout=5)
-            for line in decode_bytes(res.stdout).splitlines():
-                parts = line.split()
-                if parts and parts[0] == name:
-                    return True
-        except Exception:
-            pass
-        return False
+        return name in self.unit_names()
 
     def service_enabled(self, name):
         if not self.unit_exists(name):
@@ -1653,6 +1664,7 @@ class Sig(QObject):
     services_rows = pyqtSignal(list)
     status_html = pyqtSignal(str)
     toast = pyqtSignal(str, str)
+    spawn = pyqtSignal(object)
 
 
 class Task(QThread):
@@ -1813,10 +1825,10 @@ class MainWindow(QMainWindow):
         self.badges = {}
         self.mount_badges = {}
         self.steam_badges = {}
+        self.option_widgets = {}
         self.opts_state = {k: False for k in OPTIONS_META}
         self.mount_state = {}
         self.steam_state = {}
-        self._anims = []
         self._tasks = []
         self.sched_lbl = None
         self.sudo = SudoManager()
@@ -1863,25 +1875,13 @@ class MainWindow(QMainWindow):
         self.sig.services_rows.connect(self._on_services_rows)
         self.sig.status_html.connect(self._on_status_html)
         self.sig.toast.connect(self._on_toast)
-        app = QApplication.instance()
-        app.installEventFilter(self)
+        self.sig.spawn.connect(self._spawn_task)
         self.build_ui()
         self.log("%s v%s запущен" % (APP_NAME, APP_VERSION), "success")
         self.log("GPU: %s %s" % (self.state.gpu, self.state.gpu_model), "info")
         QTimer.singleShot(300, lambda: self._spawn_task(self._services_work))
         QTimer.singleShot(600, lambda: self._spawn_task(self._applied_work))
         QTimer.singleShot(900, lambda: self._spawn_task(self._status_work))
-
-    # ─── outside-click close for info dialogs ───
-    def eventFilter(self, obj, ev):
-        if ev.type() == QEvent.Type.MouseButtonPress:
-            dlg = getattr(self, "_info_dlg", None)
-            if dlg is not None and dlg.isVisible():
-                w = obj if isinstance(obj, QWidget) else None
-                if w is None or w.window() is not dlg:
-                    dlg.close()
-                    self._info_dlg = None
-        return False
 
     # ─── helpers ───
     def t(self, k):
@@ -2032,10 +2032,10 @@ class MainWindow(QMainWindow):
 
     def _fmt_state(self, value):
         mapping = {
-            "enabled": self.t("st_enabled") if "st_enabled" in STR[self.lang] else "enabled",
-            "disabled": self.t("st_disabled") if "st_disabled" in STR[self.lang] else "disabled",
-            "masked": self.t("st_masked") if "st_masked" in STR[self.lang] else "masked",
-            "not-found": self.t("st_notfound") if "st_notfound" in STR[self.lang] else "not found",
+            "enabled": self.t("st_enabled"),
+            "disabled": self.t("st_disabled"),
+            "masked": self.t("st_masked"),
+            "not-found": self.t("st_notfound"),
             "active": self.t("run_yes"),
             "inactive": self.t("run_no"),
         }
@@ -2387,7 +2387,6 @@ class MainWindow(QMainWindow):
         if cur.hasSelection():
             QApplication.clipboard().setText(cur.selectedText())
 
-    # ─── info dialogs (close on outside click) ───
     def _open_info_dialog(self, title, html):
         c = self.colors()
         dlg = QDialog(self)
@@ -2412,7 +2411,6 @@ class MainWindow(QMainWindow):
         te.customContextMenuRequested.connect(lambda p: self._menu_for(te, p))
         te.setHtml(html)
         vl.addWidget(te)
-        self._info_dlg = dlg
         dlg.show()
 
     def _show_option_help(self, key):
@@ -2447,7 +2445,7 @@ class MainWindow(QMainWindow):
                                                 .replace(">", "&gt;")))
         self._open_info_dialog(self.t("about_title"), html)
 
-    # ─── actions ───
+    # ─── actions ──
     def open_option_file(self, key):
         cands = [p.format(home=self.state.user_home) for p in OPTION_FILES.get(key, [])]
         target = next((p for p in cands if os.path.exists(p)), None)
@@ -2486,7 +2484,6 @@ class MainWindow(QMainWindow):
         self.log("Cannot open external editor for %s" % path, "error")
 
     def _show_viewer(self, path, content):
-        c = self.colors()
         dlg = QDialog(self)
         dlg.setWindowTitle("%s: %s" % (self.t("viewer"), path))
         dlg.resize(min(760, self.screen_w - 40), min(520, self.screen_h - 60))
@@ -2558,6 +2555,9 @@ class MainWindow(QMainWindow):
                   "swap_value": self.swap_value,
                   "update_schedule": self.schedule_value}
         dry = self.dry_check.isChecked()
+        if ("autoupdate" in selected and not dry and
+                params["update_schedule"] not in ("Отключено", "Disabled")):
+            QMessageBox.information(self, APP_NAME, self.t("autoupdate_warn"))
         if not dry and not self.sudo.ensure():
             self.log("sudo failed", "error")
             return
@@ -2578,7 +2578,6 @@ class MainWindow(QMainWindow):
         done = 0
         self.log("=" * 60, "highlight")
         self.log("APPLY START" if self.lang == "en" else "ЗАПУСК ТЮНИНГА", "highlight")
-        warned_auto = False
         try:
             for k in selected:
                 label = self.om(k)[0]
@@ -2587,10 +2586,6 @@ class MainWindow(QMainWindow):
                     getattr(ops, "apply_%s" % k)(params)
                 except Exception as e:
                     self.log("Error in %s: %s" % (k, e), "error")
-                if k == "autoupdate" and not warned_auto and \
-                        params.get("update_schedule") not in ("Отключено", "Disabled"):
-                    self.sig.toast.emit(self.t("autoupdate_warn"), "warn")
-                    warned_auto = True
                 done += 1
                 self.sig.progress.emit(int(done / total * 90))
             if mount_sel:
@@ -2609,9 +2604,9 @@ class MainWindow(QMainWindow):
             self.sig.statusbar.emit(self.t("done"))
             self.log("Done", "success")
             self.sig.toast.emit(self.t("done"), "ok")
-            self._spawn_task(self._applied_work)
-            self._spawn_task(self._status_work)
-            self._spawn_task(self._services_work)
+            self.sig.spawn.emit(self._applied_work)
+            self.sig.spawn.emit(self._status_work)
+            self.sig.spawn.emit(self._services_work)
         except Exception as e:
             self.log("Critical error: %s" % e, "error")
             self.sig.statusbar.emit(self.t("done"))
@@ -2672,9 +2667,9 @@ class MainWindow(QMainWindow):
             self.sig.statusbar.emit(self.t("done"))
             self.log("Rollback done", "success")
             self.sig.toast.emit(self.t("done"), "ok")
-            self._spawn_task(self._applied_work)
-            self._spawn_task(self._status_work)
-            self._spawn_task(self._services_work)
+            self.sig.spawn.emit(self._applied_work)
+            self.sig.spawn.emit(self._status_work)
+            self.sig.spawn.emit(self._services_work)
         except Exception as e:
             self.log("Critical error: %s" % e, "error")
             self.sig.statusbar.emit(self.t("done"))
@@ -2705,7 +2700,7 @@ class MainWindow(QMainWindow):
                 ops.log("✓ %s enabled" % n, "success")
             else:
                 ops.log("Cannot enable %s" % n, "warning")
-        self._spawn_task(self._services_work)
+        self.sig.spawn.emit(self._services_work)
 
     def disable_selected(self):
         if self.is_running:
@@ -2734,7 +2729,7 @@ class MainWindow(QMainWindow):
                 ops.log("✓ %s disabled" % n, "success")
             else:
                 ops.log("Cannot disable %s" % n, "warning")
-        self._spawn_task(self._services_work)
+        self.sig.spawn.emit(self._services_work)
 
     # ─── workers ───
     def _applied_work(self):
@@ -3139,6 +3134,7 @@ class MainWindow(QMainWindow):
         self.badges = {}
         self.mount_badges = {}
         self.steam_badges = {}
+        self.option_widgets = {}
         self.sched_lbl = None
         old = self.centralWidget()
         if old is not None:
