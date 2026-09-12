@@ -429,7 +429,7 @@ def find_steam_libraries(user_home):
                         sa = os.path.join(p, "steamapps")
                         if os.path.isdir(sa) and sa not in libs:
                             libs.append(sa)
-    except Exception:
+        except Exception:
             pass
     for pat in ("/media/*/Steam/steamapps", "/mnt/*/Steam/steamapps",
                 "/run/media/*/*/Steam/steamapps"):
@@ -3059,7 +3059,7 @@ class MainWindow(QMainWindow):
         def sv(p):
             try:
                 r = subprocess.run(["sysctl", "-n", p], capture_output=True,
-                                   text=True, timeout=3)
+                                   text=True, timeout=3, env=self._host_env())
                 return r.stdout.strip() if r.returncode == 0 else ""
             except Exception:
                 return ""
@@ -3085,7 +3085,7 @@ class MainWindow(QMainWindow):
             "swap": (m_sw and m_sw.group(1) in ("10", "150")) or cur in ("10", "150"),
             "zram": ops.path_exists("/etc/systemd/zram-generator.conf"),
             "zswap": "zswap.enabled=1" in grub,
-            "thp": bool(re.search(r"transparent_hugepage=\w+", grub)),
+            "thp": bool(re.search(r"transparent_hugepage=%s\b" % self.thp_value, grub)),
             "sysctl_cache": bool(re.search(r"^vm\.vfs_cache_pressure=50$", sysc, re.M))
                             or sv("vm.vfs_cache_pressure") == "50",
             "sysctl_numa": bool(re.search(r"^kernel\.numa_balancing=0$", sysc, re.M))
@@ -3163,7 +3163,7 @@ class MainWindow(QMainWindow):
             def sv(p):
                 try:
                     r = subprocess.run(["sysctl", "-n", p], capture_output=True,
-                                       text=True, timeout=3)
+                                       text=True, timeout=3, env=self._host_env())
                     return r.stdout.strip() if r.returncode == 0 else "n/a"
                 except Exception:
                     return "n/a"
