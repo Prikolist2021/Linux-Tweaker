@@ -2081,7 +2081,6 @@ class MainWindow(QMainWindow):
         self.state.detect()
         self.debug_log_path = os.path.join(self.state.user_home,
                                            "linux-tweaker-debug.log")
-        QApplication.instance().installEventFilter(self)
         dg = self.state.user_name if self.state.user_name != "root" else "sudo"
         self.corectrl_group = dg
         self.swap_value = "150" if self.state.swap_type == "zram" else "10"
@@ -2132,15 +2131,6 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(300, lambda: self._spawn_task(self._services_work))
         QTimer.singleShot(600, lambda: self._spawn_task(self._applied_work))
         QTimer.singleShot(900, lambda: self._spawn_task(self._status_work))
-
-    def eventFilter(self, obj, ev):
-        if ev.type() == QEvent.Type.MouseButtonPress:
-            dlg = self._info_dlg
-            if dlg is not None and dlg.isVisible():
-                w = obj if isinstance(obj, QWidget) else None
-                if w is None or not dlg.isAncestorOf(w):
-                    dlg.close()
-        return False
 
     def _clear_info(self, dlg):
         if self._info_dlg is dlg:
@@ -2761,80 +2751,36 @@ class MainWindow(QMainWindow):
             return
         self._open_info_dialog(name, "<p style='font-size:14px;'>%s</p>" % txt)
 
-    def _open_info_dialog(self, title, html):
-        c = self.colors()
-        if self._info_dlg is not None:
-            try:
-                self._info_dlg.close()
-            except Exception:
-                pass
-        dlg = DraggableDialog(self)
-        dlg.setObjectName("infodlg")
-        dlg.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
-        dlg.setWindowModality(Qt.WindowModality.ApplicationModal)
-        dlg.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        dlg.finished.connect(lambda _=None, d=dlg: self._clear_info(d))
-        self._info_dlg = dlg
+        def _open_info_dialog(self, title, html):
+        dlg = QDialog(self)
+        dlg.setWindowTitle(title)
         dlg.resize(min(720, self.screen_w - 60), min(560, self.screen_h - 80))
         vl = QVBoxLayout(dlg)
-        vl.setContentsMargins(14, 14, 14, 14)
-        hd = QHBoxLayout()
-        tl = QLabel(title)
-        tl.setStyleSheet("font-size: 16px; font-weight: bold; color: %s;" % c["accent"])
-        hd.addWidget(tl)
-        hd.addStretch(1)
-        cb = QPushButton()
-        cb.setIcon(QIcon(make_icon("close", 22, c["red"])))
-        cb.setFixedSize(28, 28)
-        cb.clicked.connect(dlg.close)
-        hd.addWidget(cb)
-        vl.addLayout(hd)
+        vl.setContentsMargins(10, 10, 10, 10)
         te = self._make_browser()
         te.setHtml(html)
         vl.addWidget(te)
-        dlg.show()
+        dlg.exec()
 
     def show_about(self):
-        c = self.colors()
-        if self._info_dlg is not None:
-            try:
-                self._info_dlg.close()
-            except Exception:
-                pass
-        dlg = DraggableDialog(self)
-        dlg.setObjectName("infodlg")
-        dlg.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
-        dlg.setWindowModality(Qt.WindowModality.ApplicationModal)
-        dlg.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        dlg.finished.connect(lambda _=None, d=dlg: self._clear_info(d))
-        self._info_dlg = dlg
-        dlg.resize(min(640, self.screen_w - 60), min(420, self.screen_h - 80))
+        dlg = QDialog(self)
+        dlg.setWindowTitle(self.t("about_title"))
+        dlg.resize(min(640, self.screen_w - 60), min(460, self.screen_h - 80))
         vl = QVBoxLayout(dlg)
-        vl.setContentsMargins(18, 18, 18, 18)
-        hd = QHBoxLayout()
-        tl = QLabel(self.t("about_title"))
-        tl.setStyleSheet("font-size: 18px; font-weight: bold; color: %s;" % c["accent"])
-        hd.addWidget(tl)
-        hd.addStretch(1)
-        cb = QPushButton()
-        cb.setIcon(QIcon(make_icon("close", 22, c["red"])))
-        cb.setFixedSize(28, 28)
-        cb.clicked.connect(dlg.close)
-        hd.addWidget(cb)
-        vl.addLayout(hd)
+        vl.setContentsMargins(12, 12, 12, 12)
         te = self._make_browser()
         html = ('<div style="font-family: monospace;">'
-                '<h2 style="color:%s;">%s v%s</h2>'
+                '<h2>%s v%s</h2>'
                 '<p>%s</p>'
                 '<p><b>%s:</b> %s</p>'
                 '<p><a href="%s">%s</a></p></div>'
-                % (c["accent"], APP_NAME, APP_VERSION,
+                % (APP_NAME, APP_VERSION,
                    self.t("about_purpose"),
                    self.t("about_author"), self.t("about_author_name"),
                    GITHUB_URL, GITHUB_URL))
         te.setHtml(html)
         vl.addWidget(te)
-        dlg.show()
+        dlg.exec()
 
     def _open_path(self, path):
         ops = SystemOps(self.sudo, self.state, lambda m, t: None, True)
