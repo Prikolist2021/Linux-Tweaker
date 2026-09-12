@@ -5,6 +5,7 @@ Linux Tweaker v0.08
 Графическая оболочка тюнинга Linux Mint / Ubuntu / Debian на PyQt6.
 RU/EN, светлая/тёмная тема, детект применённых настроек,
 откат, бэкапы, mount-опции, симлинки compatdata для Steam.
+Диалоги справки: модальные, перетаскиваемые, без крашей.
 """
 import sys, os, re, subprocess, time, shutil, glob, pwd, grp, threading, traceback
 from PyQt6.QtCore import (Qt, QObject, QThread, pyqtSignal, QTimer,
@@ -107,7 +108,7 @@ OPTIONS_META = {
         "en": ("REISUB (Magic SysRq)", "Enables SysRq emergency keys (mask 244): on a freeze hold Alt+PrtSc and press R E I S U B in order to safely terminate processes, sync and reboot without a hard reset.", "Kernel & boot", "kernel.sysrq=244")},
     "ntsync": {
         "ru": ("ntsync (модуль ядра)", "Включает модуль ntsync — новый ускоритель синхронизации для Wine/Proton. Заметный прирост FPS в части игр. Требуется ядро 6.14+ или с патчем ntsync.", "Игры и совместимость", "модуль ядра ntsync"),
-        "en": ("ntsync (kernel module)", "Enables the ntsync module — a new synchronization accelerator for Wine/Proton. Noticeable FPS gain in some games. Needs kernel 6.14+ or an ntsync-patched one.", "Gaming & compatibility", "ntsync kernel module")},
+        "en": ("ntsync (kernel module)", "Enables the ntsync module — a new synchronization accelerator for Wine/Proton. Noticeable FPS gain in some games. Needs kernel 6.14+ or a patched one.", "Gaming & compatibility", "ntsync kernel module")},
     "ntfs3": {
         "ru": ("ntfs3 драйвер", "Включает быстрый встроенный драйвер ntfs3 для NTFS-дисков вместо медленного ntfs-3g. Linux Mint по умолчанию его блокирует — опция снимает блокировку.", "Диски и файловые системы", "быстрый драйвер ntfs3"),
         "en": ("ntfs3 driver", "Enables the fast in-kernel ntfs3 driver for NTFS disks instead of slow ntfs-3g. Linux Mint blocks it by default — this option lifts the block.", "Drives & filesystems", "fast ntfs3 driver")},
@@ -142,7 +143,7 @@ OPTIONS_HELP = {
     "nvidia_modeset": {"ru": "nvidia-drm.modeset=1 включает kernel modesetting для проприетарного драйвера NVIDIA: необходимо для Wayland, плавного переключения видеорежимов и корректной работы композитора.", "en": "nvidia-drm.modeset=1 enables kernel modesetting for the proprietary NVIDIA driver: required for Wayland, smooth mode switching and correct compositing."},
     "vrr": {"ru": "VRR (FreeSync) позволяет монитору обновляться синхронно с кадрами игры, убирая разрывы картинки. Работает только в X11 с драйвером amdgpu и на мониторе с поддержкой FreeSync.", "en": "VRR (FreeSync) lets the monitor refresh in sync with game frames, removing tearing. Works only in X11 with the amdgpu driver and a FreeSync-capable monitor."},
     "radv": {"ru": "SAM / Resizable BAR даёт процессору доступ ко всей видеопамяти сразу, а не кусками. Это даёт небольшой прирост FPS в играх. Параметр включает оптимизацию в открытом драйвере RADV.", "en": "SAM / Resizable BAR gives the CPU access to all VRAM at once instead of chunks, giving a small FPS gain. This option enables the optimization in the open RADV driver."},
-    "mesa": {"ru": "MESA кэширует скомпилированные шейдеры игр. По умолчанию кэш мал, и игры часто перекомпилируют шейдеры, вызывая подтормаживания. Увеличение кэша до 4 ГБ уменьшает эти паузы.", "en": "MESA caches compiled game shaders. The default cache is small so games recompile shaders often, causing hitches. Raising the cache to 4 GB reduces those pauses."},
+    "mesa": {"ru": "MESA кэширует скомпилированные шейдеры игр. По умолчанию кэш мал, и игры часто перекомпилируют шейдеры, вызывая подтормаживания. Увеличение кэша до 4 ГБ уменьшает эти паузы.", "en": "MESA caches compiled game shaders. The default cache is small so games recompile shaders often, causing hitches. Raising the cache to 4 GB reduces these pauses."},
     "pipewire": {"ru": "PipeWire — звуковой сервер. Малые буферы дают низкую задержку, но на некоторых системах вызывают треск и щелчки. Увеличение буферов (квантов) убирает артефакты ценой чуть большей задержки (незаметно на практике).", "en": "PipeWire is the sound server. Small buffers give low latency but on some systems cause crackling. Increasing the quanta removes artifacts at the cost of slightly higher latency (imperceptible in practice)."},
     "bbr": {"ru": "BBR — современный алгоритм управления перегрузками TCP от Google. Вместе с очередью fq даёт более высокую реальную пропускную способность и меньшие задержки, особенно на нестабильных каналах.", "en": "BBR is Google's modern TCP congestion control. Together with the fq queue it gives higher real throughput and lower latency, especially on unstable links."},
     "swap": {"ru": "vm.swappiness управляет тем, как охотно система вытесняет память в swap. Высокое значение (150) выгодно для сжатого zram (память), низкое (10) — для диска/SSD, чтобы не дёргать диск лишний раз.", "en": "vm.swappiness controls how eagerly memory is pushed to swap. A high value (150) suits compressed zram (memory); a low value (10) suits disk/SSD to avoid needless disk access."},
@@ -189,7 +190,7 @@ SERVICES_HELP = {
     "switcheroo-control.service": {"ru": "Переключает встроенную и дискретную графику на гибридных ноутбуках. На настольном ПК с одной видеокартой не нужна.", "en": "Switches integrated and discrete graphics on hybrid laptops. On a desktop with a single GPU it is unneeded."},
     "touchegg.service": {"ru": "Распознаёт мультитач-жесты на тачпадах и тачскринах. На настольном ПК без сенсорного ввода не нужна.", "en": "Recognizes multitouch gestures on touchpads and touchscreens. On a desktop without touch input it is unneeded."},
     "zfs-zed.service": {"ru": "Демон ZFS (ZED) следит за состоянием ZFS-пулов и шлёт уведомления о проблемах дисков. Без ZFS не нужна.", "en": "The ZFS daemon (ZED) monitors ZFS pool health and sends notifications on disk issues. Without ZFS it is unneeded."},
-    "kerneloops.service": {"ru": "Собирает и отправляет разработчикам отчётов о сбоях ядра. На домашнем ПК это лишь фоновая нагрузка и исходящий трафик.", "en": "Collects and sends kernel crash reports to developers. On a home PC this is only background load and outgoing traffic."},
+    "kerneloops.service": {"ru": "Собирает и отправляет разработчикам отчёты о сбоях ядра. На домашнем ПК это лишь фоновая нагрузка и исходящий трафик.", "en": "Collects and sends kernel crash reports to developers. On a home PC this is only background load and outgoing traffic."},
 }
 
 OPTION_FILES = {
@@ -248,8 +249,6 @@ STR = {
         "st_hw": "ИНФОРМАЦИЯ О СИСТЕМЕ", "st_parts": "РАЗДЕЛЫ СИСТЕМЫ",
         "st_tweaks": "ТВИКИ", "st_services": "СЛУЖБЫ", "st_kernel": "ПАРАМЕТРЫ ЯДРА",
         "st_timer": "Таймер автообновлений",
-        "st_enabled": "включён", "st_disabled": "отключён",
-        "st_masked": "заблокирован", "st_notfound": "не найден",
         "part_mount": "Раздел", "part_fs": "ФС", "part_total": "Всего",
         "part_free": "Свободно",
         "os_lbl": "ОС", "gpu_lbl": "Видеокарта", "screen_lbl": "Разрешение экрана",
@@ -309,8 +308,6 @@ STR = {
         "st_hw": "SYSTEM INFORMATION", "st_parts": "SYSTEM PARTITIONS",
         "st_tweaks": "TWEAKS", "st_services": "SERVICES", "st_kernel": "KERNEL PARAMETERS",
         "st_timer": "Auto-update timer",
-        "st_enabled": "enabled", "st_disabled": "disabled",
-        "st_masked": "blocked", "st_notfound": "not found",
         "part_mount": "Partition", "part_fs": "FS", "part_total": "Total",
         "part_free": "Free",
         "os_lbl": "OS", "gpu_lbl": "GPU", "screen_lbl": "Screen resolution",
@@ -432,7 +429,7 @@ def find_steam_libraries(user_home):
                         sa = os.path.join(p, "steamapps")
                         if os.path.isdir(sa) and sa not in libs:
                             libs.append(sa)
-        except Exception:
+    except Exception:
             pass
     for pat in ("/media/*/Steam/steamapps", "/mnt/*/Steam/steamapps",
                 "/run/media/*/*/Steam/steamapps"):
@@ -440,6 +437,10 @@ def find_steam_libraries(user_home):
             if os.path.isdir(p) and p not in libs:
                 libs.append(p)
     return libs
+
+
+def lines_in(content):
+    return content.splitlines()
 
 
 def _gear_path(cx, cy, r):
@@ -563,10 +564,6 @@ def make_icon(kind, size=48, accent="#4ec9b0", fg="#d4d4d4"):
     return px
 
 
-def lines_in(content):
-    return content.splitlines()
-
-
 class SudoManager:
     def __init__(self):
         self.prompt_password = None
@@ -635,6 +632,8 @@ class SudoManager:
                     subprocess.run(["sudo", "-n", "-v"], capture_output=True, timeout=5)
                 except Exception:
                     pass
+            self._keepalive = False
+            self.authenticated = False
         threading.Thread(target=loop, daemon=True).start()
 
 
@@ -753,17 +752,17 @@ class SystemOps:
             if content is None:
                 return
             os.makedirs(self.backup_dir, exist_ok=True)
-            safe_name = path.lstrip("/").replace("/", "_")
-            backup_path = os.path.join(self.backup_dir, safe_name + ".bak")
-            with open(backup_path, "w", encoding="utf-8") as f:
+            safe = path.lstrip("/").replace("/", "_")
+            bp = os.path.join(self.backup_dir, safe + ".bak")
+            with open(bp, "w", encoding="utf-8") as f:
                 f.write(content)
             if self.state.user_name and self.state.user_name != "root":
                 try:
                     pw = pwd.getpwnam(self.state.user_name)
-                    os.chown(backup_path, pw.pw_uid, pw.pw_gid)
+                    os.chown(bp, pw.pw_uid, pw.pw_gid)
                 except Exception:
                     pass
-            self.log("[BACKUP] %s" % os.path.basename(backup_path), "info")
+            self.log("[BACKUP] %s" % os.path.basename(bp), "info")
         except Exception as e:
             self.log("[WARN] backup %s: %s" % (path, e), "warning")
 
@@ -1030,15 +1029,21 @@ class SystemOps:
         if (re.search(r"^\s*Storage\s*=\s*volatile\s*$", content, re.M)
                 and re.search(r"^\s*RuntimeMaxUse\s*=\s*50M\s*$", content, re.M)):
             self.log("journald already configured", "info"); return True
-        new_lines = []
+        out = []
+        inserted = False
         for line in lines_in(content):
-            if re.match(r"^\s*(Storage|RuntimeMaxUse)\s*=", line):
-                new_lines.append(line if line.lstrip().startswith("#") else "# " + line)
-            else:
-                new_lines.append(line)
-        new_lines += ["Storage=volatile", "RuntimeMaxUse=50M"]
+            if (re.match(r"^\s*(Storage|RuntimeMaxUse)\s*=", line)
+                    and not line.lstrip().startswith("#")):
+                out.append("# " + line)
+                continue
+            out.append(line)
+            if re.match(r"^\s*\[Journal\]\s*$", line) and not inserted:
+                out += ["Storage=volatile", "RuntimeMaxUse=50M"]
+                inserted = True
+        if not inserted:
+            out = ["[Journal]", "Storage=volatile", "RuntimeMaxUse=50M"] + out
         self.backup_file(path)
-        if not self.write_file(path, "\n".join(new_lines) + "\n", backup=False):
+        if not self.write_file(path, "\n".join(out) + "\n", backup=False):
             return False
         self.sudo_run(["systemctl", "restart", "systemd-journald"], ignore_error=True)
         self.sudo_run(["journalctl", "--vacuum-size=200M", "--vacuum-time=1months"],
@@ -1150,10 +1155,13 @@ class SystemOps:
     def apply_bbr(self, params=None):
         path = "/etc/sysctl.d/99-bbr.conf"
         content = "net.core.default_qdisc=fq\nnet.ipv4.tcp_congestion_control=bbr\n"
-        if self.write_file(path, content, chmod="644", mkdir=True):
-            self.sudo_run(["sysctl", "-p", path], ignore_error=True)
-            self.log("✓ TCP BBR enabled", "success"); return True
-        return False
+        if not self.write_file(path, content, chmod="644", mkdir=True):
+            return False
+        self.write_file("/etc/modules-load.d/bbr.conf", "tcp_bbr\n",
+                        chmod="644", mkdir=True)
+        self.sudo_run(["modprobe", "tcp_bbr"], ignore_error=True)
+        self.sudo_run(["sysctl", "-p", path], ignore_error=True)
+        self.log("✓ TCP BBR enabled", "success"); return True
 
     def apply_swap(self, params=None):
         params = params or {}
@@ -1191,8 +1199,10 @@ class SystemOps:
         return False
 
     def apply_zswap(self, params=None):
-        return self.add_grub_params(["zswap.enabled=1", "zswap.compressor=zstd",
-                                     "zswap.zpool=z3fold"])
+        pl = ["zswap.enabled=1", "zswap.compressor=zstd"]
+        if os.path.exists("/sys/module/z3fold"):
+            pl.append("zswap.zpool=z3fold")
+        return self.add_grub_params(pl)
 
     def apply_thp(self, params=None):
         params = params or {}
@@ -1344,6 +1354,7 @@ class SystemOps:
         lines = lines_in(content)
         idx, parts = self._fstab_find(lines, mp, uuid)
         if idx is None:
+            self.log("%s not found in fstab — skipped" % mp, "warning")
             return False
         opts = [o for o in parts[3].split(",") if not o.startswith("commit=")]
         if add:
@@ -1376,6 +1387,14 @@ class SystemOps:
     def apply_commit(self, params=None):
         params = params or {}
         val = str(params.get("commit_value", "60")).strip() or "60"
+        try:
+            iv = int(val)
+            if iv < 1 or iv > 3600:
+                raise ValueError
+        except ValueError:
+            self.log("Bad commit value: %s (1-3600)" % val, "error")
+            return False
+        val = str(iv)
         if self.dry_run:
             self.log("[DRY RUN] fstab commit=%s" % val, "warning"); return True
         ok = True
@@ -1532,7 +1551,7 @@ class SystemOps:
                   'info() { apt show "$@"; }', ""]
         block += ["clean() {", "    sudo apt autoremove -y && sudo apt autoclean && sudo apt clean", "}", ""]
         block += ["space() {", "    df -h /", "}", ""]
-        block += ["fix() {", "    sudo apt --fix-broken install -y", "    sudo dpkg --configure -a", "}", ""]
+        block += ["fix() {", "    sudo apt --fix-broken install -y && sudo dpkg --configure -a", "}", ""]
         block += ["mem() {", "    sync && sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches' && free -h", "}", ""]
         block += ["serv() {", "    systemctl list-unit-files --type=service | less", "}", ""]
         block += ["update_time() {",
@@ -1730,6 +1749,7 @@ class SystemOps:
 
     def rollback_bbr(self, params=None):
         self._rm("/etc/sysctl.d/99-bbr.conf")
+        self._rm("/etc/modules-load.d/bbr.conf")
         self.sudo_run(["sysctl", "-w", "net.ipv4.tcp_congestion_control=cubic"],
                       ignore_error=True)
         return True
@@ -1969,6 +1989,26 @@ class Toast(QFrame):
             self.hide()
 
 
+class DraggableDialog(QDialog):
+    """Модальный frameless-диалог, который можно перетаскивать за фон/шапку."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._drag_pos = None
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self._drag_pos = e.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            e.accept()
+
+    def mouseMoveEvent(self, e):
+        if self._drag_pos is not None and e.buttons() == Qt.MouseButton.LeftButton:
+            self.move(e.globalPosition().toPoint() - self._drag_pos)
+            e.accept()
+
+    def mouseReleaseEvent(self, e):
+        self._drag_pos = None
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -2056,9 +2096,6 @@ class MainWindow(QMainWindow):
 
     def colors(self):
         return THEMES[self.theme]
-
-    def _scaled(self, px):
-        return max(1, int(px))
 
     def _host_env(self):
         return {k: v for k, v in os.environ.items()
@@ -2585,9 +2622,9 @@ class MainWindow(QMainWindow):
 
     def _open_info_dialog(self, title, html):
         c = self.colors()
-        dlg = QDialog(self)
+        dlg = DraggableDialog(self)
         dlg.setObjectName("infodlg")
-        dlg.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+        dlg.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         dlg.setModal(True)
         self._info_dlg = dlg
         dlg.resize(min(720, self.screen_w - 60), min(560, self.screen_h - 80))
@@ -2614,9 +2651,9 @@ class MainWindow(QMainWindow):
 
     def show_about(self):
         c = self.colors()
-        dlg = QDialog(self)
+        dlg = DraggableDialog(self)
         dlg.setObjectName("infodlg")
-        dlg.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+        dlg.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         dlg.setModal(True)
         self._info_dlg = dlg
         dlg.resize(min(640, self.screen_w - 60), min(420, self.screen_h - 80))
@@ -2659,7 +2696,7 @@ class MainWindow(QMainWindow):
         self._show_viewer(path, content)
 
     def _show_viewer(self, path, content):
-        dlg = QDialog(self)
+        dlg = DraggableDialog(self)
         dlg.setWindowTitle("%s: %s" % (self.t("viewer"), path))
         dlg.resize(min(760, self.screen_w - 40), min(520, self.screen_h - 60))
         vl = QVBoxLayout(dlg)
@@ -2739,6 +2776,7 @@ class MainWindow(QMainWindow):
         if col == 4:
             name = self.table.item(row, 0).text()
             self._show_service_help(name)
+            self.table.clearSelection()
 
     def _serv_detail(self):
         items = self.table.selectedItems()
@@ -2773,6 +2811,7 @@ class MainWindow(QMainWindow):
         if not dry and not self.sudo.ensure():
             self.log("sudo failed", "error")
             return
+        self._ram_cache = None
         self.is_running = True
         self.apply_btn.setEnabled(False)
         self.sig.running.emit(True)
@@ -2786,6 +2825,8 @@ class MainWindow(QMainWindow):
         ops = SystemOps(self.sudo, self.state, self.log, dry)
         ops.mount_items = self.mount_items
         total = len(selected) + (1 if mount_sel else 0) + (1 if steam_sel else 0)
+        if total == 0:
+            return
         done = 0
         self.log("=" * 60, "highlight")
         self.log("APPLY START" if self.lang == "en" else "ЗАПУСК ТЮНИНГА", "highlight")
@@ -2837,6 +2878,7 @@ class MainWindow(QMainWindow):
         if not dry and not self.sudo.ensure():
             self.log("sudo failed", "error")
             return
+        self._ram_cache = None
         self.is_running = True
         self.apply_btn.setEnabled(False)
         self.sig.running.emit(True)
@@ -2850,6 +2892,8 @@ class MainWindow(QMainWindow):
         ops = SystemOps(self.sudo, self.state, self.log, dry)
         ops.mount_items = self.mount_items
         total = len(selected) + (1 if mount_sel else 0) + (1 if steam_sel else 0)
+        if total == 0:
+            return
         done = 0
         self.log("=" * 60, "highlight")
         self.log("ROLLBACK START" if self.lang == "en" else "ЗАПУСК ОТКАТА", "highlight")
@@ -2911,6 +2955,7 @@ class MainWindow(QMainWindow):
             else:
                 ops.log("Cannot enable %s" % name, "warning")
         self.sig.spawn.emit(self._services_work)
+        self.sig.spawn.emit(self._status_work)
 
     def disable_selected(self):
         if self.is_running:
@@ -2940,6 +2985,7 @@ class MainWindow(QMainWindow):
             else:
                 ops.log("Cannot disable %s" % name, "warning")
         self.sig.spawn.emit(self._services_work)
+        self.sig.spawn.emit(self._status_work)
 
     def _applied_work(self):
         ops = SystemOps(self.sudo, self.state, lambda m, t: None, True)
@@ -3134,12 +3180,15 @@ class MainWindow(QMainWindow):
                         .replace(">", "&gt;"))
 
             def table(title, headers, rows_html):
-                h = "<table border='1' cellspacing='0' cellpadding='4' width='100%'>"
-                h += "<tr><th colspan='%d' style='background:%s; color:%s; text-align:left;'>%s</th></tr>" % (
-                    len(headers), col("tab"), col("fg"), esc(title))
+                bc = col("border")
+                h = ("<table border='1' cellspacing='0' cellpadding='4' width='100%%' "
+                     "style='border-collapse:collapse; border:1px solid %s;'>" % bc)
+                h += ("<tr><th colspan='%d' style='background:%s; color:%s; "
+                      "text-align:left; border:1px solid %s;'>%s</th></tr>"
+                      % (len(headers), col("tab"), col("fg"), bc, esc(title)))
                 h += "<tr>" + "".join(
-                    "<td style='background:%s; color:%s;'><b>%s</b></td>" % (
-                        col("panel"), col("gray"), esc(x)) for x in headers) + "</tr>"
+                    "<td style='background:%s; color:%s; border:1px solid %s;'><b>%s</b></td>"
+                    % (col("panel"), col("gray"), bc, esc(x)) for x in headers) + "</tr>"
                 h += "".join(rows_html)
                 h += "</table><br>"
                 return h
@@ -3203,8 +3252,8 @@ class MainWindow(QMainWindow):
                   ("ntsync", self.t("w_yes") if self.state.ntsync else self.t("w_no")),
                   (self.t("user_lbl"), self.state.user_name),
                   (self.t("home_lbl"), self.state.user_home)]
-            hw_rows = ["<tr><td style='color:%s;'><b>%s</b></td><td style='color:%s;'>%s</td></tr>" % (
-                col("gray"), esc(k), col("fg"), esc(v)) for k, v in hw]
+            hw_rows = ["<tr><td style='color:%s;'><b>%s</b></td><td style='color:%s;'>%s</td></tr>"
+                       % (col("gray"), esc(k), col("fg"), esc(v)) for k, v in hw]
             P.append(table(self.t("st_hw"), [self.t("st_hw"), ""], hw_rows))
             seen = {}
             for it in parse_mounts():
@@ -3219,11 +3268,15 @@ class MainWindow(QMainWindow):
                 if not d:
                     continue
                 total, free = d
-                part_rows.append("<tr><td style='color:%s;'><b>%s</b> (%s)</td><td style='color:%s;'>%s</td><td style='color:%s;'>%.1f %s</td><td style='color:%s;'>%.1f %s</td></tr>" % (
-                    col("fg"), esc(", ".join(info["mps"])), esc(os.path.basename(dev)),
-                    col("gray"), esc(info["fstype"]),
-                    col("fg"), total, self.t("gb"),
-                    col("fg"), free, self.t("gb")))
+                part_rows.append(
+                    "<tr><td style='color:%s;'><b>%s</b> (%s)</td>"
+                    "<td style='color:%s;'>%s</td>"
+                    "<td style='color:%s;'>%.1f %s</td>"
+                    "<td style='color:%s;'>%.1f %s</td></tr>"
+                    % (col("fg"), esc(", ".join(info["mps"])), esc(os.path.basename(dev)),
+                       col("gray"), esc(info["fstype"]),
+                       col("fg"), total, self.t("gb"),
+                       col("fg"), free, self.t("gb")))
             P.append(table(self.t("st_parts"),
                            [self.t("part_mount"), self.t("part_fs"),
                             self.t("part_total"), self.t("part_free")], part_rows))
@@ -3232,22 +3285,31 @@ class MainWindow(QMainWindow):
                 label, _d, _c, short = self.om(k)
                 ok = A.get(k, False)
                 cc = col("green") if ok else col("red")
-                tw_rows.append("<tr><td style='color:%s;'><b>%s</b></td><td style='color:%s;'><b>%s</b></td><td style='color:%s;'>%s</td></tr>" % (
-                    col("fg"), esc(label), cc, self.t("yes") if ok else self.t("no"),
-                    col("gray"), esc(short)))
+                tw_rows.append(
+                    "<tr><td style='color:%s;'><b>%s</b></td>"
+                    "<td style='color:%s;'><b>%s</b></td>"
+                    "<td style='color:%s;'>%s</td></tr>"
+                    % (col("fg"), esc(label), cc,
+                       self.t("yes") if ok else self.t("no"), col("gray"), esc(short)))
             for m in self.mount_items:
                 ok = self.mount_applied.get(m["mps"][0], False)
                 cc = col("green") if ok else col("red")
-                tw_rows.append("<tr><td style='color:%s;'><b>%s</b></td><td style='color:%s;'><b>%s</b></td><td style='color:%s;'>%s</td></tr>" % (
-                    col("fg"), esc(self.t("mount_short")), cc,
-                    self.t("yes") if ok else self.t("no"), col("gray"),
-                    esc(", ".join(m["mps"]))))
+                tw_rows.append(
+                    "<tr><td style='color:%s;'><b>%s</b></td>"
+                    "<td style='color:%s;'><b>%s</b></td>"
+                    "<td style='color:%s;'>%s</td></tr>"
+                    % (col("fg"), esc(self.t("mount_short")), cc,
+                       self.t("yes") if ok else self.t("no"), col("gray"),
+                       esc(", ".join(m["mps"]))))
             for lib in self.steam_items:
                 ok = self.steam_applied.get(lib, False)
                 cc = col("green") if ok else col("red")
-                tw_rows.append("<tr><td style='color:%s;'><b>%s</b></td><td style='color:%s;'><b>%s</b></td><td style='color:%s;'>%s</td></tr>" % (
-                    col("fg"), esc(self.t("steam_short")), cc,
-                    self.t("yes") if ok else self.t("no"), col("gray"), esc(lib)))
+                tw_rows.append(
+                    "<tr><td style='color:%s;'><b>%s</b></td>"
+                    "<td style='color:%s;'><b>%s</b></td>"
+                    "<td style='color:%s;'>%s</td></tr>"
+                    % (col("fg"), esc(self.t("steam_short")), cc,
+                       self.t("yes") if ok else self.t("no"), col("gray"), esc(lib)))
             P.append(table(self.t("st_tweaks"),
                            [self.t("tw_name"), self.t("yes"), ""], tw_rows))
             sv_rows = []
@@ -3264,9 +3326,12 @@ class MainWindow(QMainWindow):
                     cc, w = col("green"), self.t("svc_on")
                 else:
                     cc, w = col("yellow"), self.t("svc_onoff")
-                sv_rows.append("<tr><td style='color:%s;'><b>%s</b></td><td style='color:%s;'><b>%s</b></td><td style='color:%s;'>%s</td></tr>" % (
-                    col("fg"), esc(n), cc, esc(w), col("gray"),
-                    esc(SERVICES_META[n][self.lang])))
+                sv_rows.append(
+                    "<tr><td style='color:%s;'><b>%s</b></td>"
+                    "<td style='color:%s;'><b>%s</b></td>"
+                    "<td style='color:%s;'>%s</td></tr>"
+                    % (col("fg"), esc(n), cc, esc(w), col("gray"),
+                       esc(SERVICES_META[n][self.lang])))
             P.append(table(self.t("st_services"),
                            [self.t("svc_name"), self.t("svc_state"), self.t("svc_desc")],
                            sv_rows))
@@ -3277,13 +3342,20 @@ class MainWindow(QMainWindow):
                     ("net.ipv4.tcp_congestion_control", "BBR", A.get("bbr", False))]
             for p, dsc, ok in kern:
                 cc = col("green") if ok else col("red")
-                kn_rows.append("<tr><td style='color:%s;'><b>%s</b></td><td style='color:%s;'><b>%s</b></td><td style='color:%s;'>%s</td><td style='color:%s;'><b>%s</b></td></tr>" % (
-                    col("fg"), esc(p), col("fg"), esc(vals[p]), col("gray"), esc(dsc),
-                    cc, self.t("yes") if ok else self.t("no")))
+                kn_rows.append(
+                    "<tr><td style='color:%s;'><b>%s</b></td>"
+                    "<td style='color:%s;'><b>%s</b></td>"
+                    "<td style='color:%s;'>%s</td>"
+                    "<td style='color:%s;'><b>%s</b></td></tr>"
+                    % (col("fg"), esc(p), col("fg"), esc(vals[p]), col("gray"), esc(dsc),
+                       cc, self.t("yes") if ok else self.t("no")))
             timer = ops.service_enabled("biweekly-upgrade.timer")
             tcc = col("green") if timer == "enabled" else col("gray")
-            kn_rows.append("<tr><td style='color:%s;'><b>%s</b></td><td style='color:%s;'><b>%s</b></td><td colspan='2'></td></tr>" % (
-                col("fg"), esc(self.t("st_timer")), tcc, esc(self._fmt_state(timer))))
+            kn_rows.append(
+                "<tr><td style='color:%s;'><b>%s</b></td>"
+                "<td style='color:%s;'><b>%s</b></td>"
+                "<td colspan='2'></td></tr>"
+                % (col("fg"), esc(self.t("st_timer")), tcc, esc(self._fmt_state(timer))))
             P.append(table(self.t("st_kernel"),
                            [self.t("kn_param"), self.t("kn_val"), "", ""], kn_rows))
             self.sig.status_html.emit("".join(P))
