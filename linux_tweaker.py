@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Linux Tweaker v0.07
+Linux Tweaker v0.08
 Графическая оболочка тюнинга Linux Mint / Ubuntu / Debian на PyQt6.
 RU/EN, светлая/тёмная тема, детект применённых настроек,
 откат, бэкапы, mount-опции, симлинки compatdata для Steam.
@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget,
                              QGraphicsOpacityEffect)
 
 APP_NAME = "Linux Tweaker"
-APP_VERSION = "0.07"
+APP_VERSION = "0.08"
 GITHUB_URL = "https://github.com/Prikolist2021/Linux-Tweaker"
 
 THEMES = {
@@ -176,6 +176,7 @@ SERVICES_META = {
     "kerneloops.service": {"ru": "Отправка разработчикам отчётов о сбоях ядра. На домашнем ПК не нужна.", "en": "Sends kernel crash reports to developers. Unneeded on a home PC."},
 }
 SERVICES_ORDER = list(SERVICES_META.keys())
+
 SERVICES_HELP = {
     "avahi-daemon.service": {"ru": "Avahi (mDNS/DNS-SD) позволяет устройствам в локальной сети находить друг друга без настройки: принтеры, колонки, ТВ. Если у вас нет сетевых принтеров и вы не пользуетесь Chromecast/AirPlay, служба не нужна и только периодически рассылает пакеты по сети. Отключение безопасно.", "en": "Avahi (mDNS/DNS-SD) lets local devices discover each other without setup: printers, speakers, TVs. If you have no network printers and don't use Chromecast/AirPlay, the service is unneeded and only periodically broadcasts on the network. Safe to disable."},
     "avahi-daemon.socket": {"ru": "Сокет активирует avahi-daemon при первом обращении из сети. Отключайте вместе со службой, чтобы avahi не «проснулась» сама.", "en": "The socket activates avahi-daemon on first network request. Disable together with the service so avahi cannot wake up on its own."},
@@ -188,7 +189,7 @@ SERVICES_HELP = {
     "switcheroo-control.service": {"ru": "Переключает встроенную и дискретную графику на гибридных ноутбуках. На настольном ПК с одной видеокартой не нужна.", "en": "Switches integrated and discrete graphics on hybrid laptops. On a desktop with a single GPU it is unneeded."},
     "touchegg.service": {"ru": "Распознаёт мультитач-жесты на тачпадах и тачскринах. На настольном ПК без сенсорного ввода не нужна.", "en": "Recognizes multitouch gestures on touchpads and touchscreens. On a desktop without touch input it is unneeded."},
     "zfs-zed.service": {"ru": "Демон ZFS (ZED) следит за состоянием ZFS-пулов и шлёт уведомления о проблемах дисков. Без ZFS не нужна.", "en": "The ZFS daemon (ZED) monitors ZFS pool health and sends notifications on disk issues. Without ZFS it is unneeded."},
-    "kerneloops.service": {"ru": "Собирает и отправляет разработчикам отчёты о сбоях ядра. На домашнем ПК это лишь фоновая нагрузка и исходящий трафик.", "en": "Collects and sends kernel crash reports to developers. On a home PC this is only background load and outgoing traffic."},
+    "kerneloops.service": {"ru": "Собирает и отправляет разработчикам отчётов о сбоях ядра. На домашнем ПК это лишь фоновая нагрузка и исходящий трафик.", "en": "Collects and sends kernel crash reports to developers. On a home PC this is only background load and outgoing traffic."},
 }
 
 OPTION_FILES = {
@@ -247,6 +248,8 @@ STR = {
         "st_hw": "ИНФОРМАЦИЯ О СИСТЕМЕ", "st_parts": "РАЗДЕЛЫ СИСТЕМЫ",
         "st_tweaks": "ТВИКИ", "st_services": "СЛУЖБЫ", "st_kernel": "ПАРАМЕТРЫ ЯДРА",
         "st_timer": "Таймер автообновлений",
+        "st_enabled": "включён", "st_disabled": "отключён",
+        "st_masked": "заблокирован", "st_notfound": "не найден",
         "part_mount": "Раздел", "part_fs": "ФС", "part_total": "Всего",
         "part_free": "Свободно",
         "os_lbl": "ОС", "gpu_lbl": "Видеокарта", "screen_lbl": "Разрешение экрана",
@@ -306,6 +309,8 @@ STR = {
         "st_hw": "SYSTEM INFORMATION", "st_parts": "SYSTEM PARTITIONS",
         "st_tweaks": "TWEAKS", "st_services": "SERVICES", "st_kernel": "KERNEL PARAMETERS",
         "st_timer": "Auto-update timer",
+        "st_enabled": "enabled", "st_disabled": "disabled",
+        "st_masked": "blocked", "st_notfound": "not found",
         "part_mount": "Partition", "part_fs": "FS", "part_total": "Total",
         "part_free": "Free",
         "os_lbl": "OS", "gpu_lbl": "GPU", "screen_lbl": "Screen resolution",
@@ -437,6 +442,19 @@ def find_steam_libraries(user_home):
     return libs
 
 
+def _gear_path(cx, cy, r):
+    path = QPainterPath()
+    for i in range(8):
+        tr = QTransform().translate(cx, cy).rotate(i * 45.0).translate(-cx, -cy)
+        rect = QRectF(cx - r * 0.16, cy - r, r * 0.32, r * 0.42)
+        path.addRect(tr.mapRect(rect))
+    ring = QPainterPath()
+    ring.addEllipse(QRectF(cx - r * 0.66, cy - r * 0.66, r * 1.32, r * 1.32))
+    hole = QPainterPath()
+    hole.addEllipse(QRectF(cx - r * 0.28, cy - r * 0.28, r * 0.56, r * 0.56))
+    return path + (ring - hole)
+
+
 def make_icon(kind, size=48, accent="#4ec9b0", fg="#d4d4d4"):
     px = QPixmap(size, size)
     px.fill(Qt.GlobalColor.transparent)
@@ -545,17 +563,8 @@ def make_icon(kind, size=48, accent="#4ec9b0", fg="#d4d4d4"):
     return px
 
 
-def _gear_path(cx, cy, r):
-    path = QPainterPath()
-    for i in range(8):
-        tr = QTransform().translate(cx, cy).rotate(i * 45.0).translate(-cx, -cy)
-        rect = QRectF(cx - r * 0.16, cy - r, r * 0.32, r * 0.42)
-        path.addRect(tr.mapRect(rect))
-    ring = QPainterPath()
-    ring.addEllipse(QRectF(cx - r * 0.66, cy - r * 0.66, r * 1.32, r * 1.32))
-    hole = QPainterPath()
-    hole.addEllipse(QRectF(cx - r * 0.28, cy - r * 0.28, r * 0.56, r * 0.56))
-    return path + (ring - hole)
+def lines_in(content):
+    return content.splitlines()
 
 
 class SudoManager:
@@ -731,6 +740,7 @@ class SystemOps:
         self.log = log
         self.dry_run = dry_run
         self.grub_changed = False
+        self.mount_items = []
         self.backup_dir = os.path.join(state.user_home, "system-tuneup-backups")
 
     def backup_file(self, path):
@@ -743,17 +753,17 @@ class SystemOps:
             if content is None:
                 return
             os.makedirs(self.backup_dir, exist_ok=True)
-            safe = path.lstrip("/").replace("/", "_")
-            bp = os.path.join(self.backup_dir, safe + ".bak")
-            with open(bp, "w", encoding="utf-8") as f:
+            safe_name = path.lstrip("/").replace("/", "_")
+            backup_path = os.path.join(self.backup_dir, safe_name + ".bak")
+            with open(backup_path, "w", encoding="utf-8") as f:
                 f.write(content)
             if self.state.user_name and self.state.user_name != "root":
                 try:
                     pw = pwd.getpwnam(self.state.user_name)
-                    os.chown(bp, pw.pw_uid, pw.pw_gid)
+                    os.chown(backup_path, pw.pw_uid, pw.pw_gid)
                 except Exception:
                     pass
-            self.log("[BACKUP] %s" % os.path.basename(bp), "info")
+            self.log("[BACKUP] %s" % os.path.basename(backup_path), "info")
         except Exception as e:
             self.log("[WARN] backup %s: %s" % (path, e), "warning")
 
@@ -777,7 +787,7 @@ class SystemOps:
             err = decode_bytes(res.stderr).strip()
             msg = err_msg or "Command failed: " + " ".join(args)
             if err:
-                self.log("[ERR] %s\n   %s" % (msg, err), "error")
+                self.log("[ERR] %s\n%s" % (msg, err), "error")
             else:
                 self.log("[ERR] %s" % msg, "error")
         return False
@@ -841,7 +851,7 @@ class SystemOps:
         if content is None:
             self.log("Cannot read %s" % path, "error")
             return False
-        lines = content.splitlines()
+        lines = lines_in(content)
         new_lines, replaced, changed = [], False, False
         try:
             rx = re.compile(pattern)
@@ -925,8 +935,7 @@ class SystemOps:
                 orig = parts.copy()
                 parts += [x for x in params if x not in parts]
                 if parts != orig:
-                    new_lines_val = 'GRUB_CMDLINE_LINUX_DEFAULT="' + " ".join(parts) + '"'
-                    new_lines.append(new_lines_val)
+                    new_lines.append('GRUB_CMDLINE_LINUX_DEFAULT="' + " ".join(parts) + '"')
                     changed = True
                 else:
                     new_lines.append(line)
@@ -1301,7 +1310,7 @@ class SystemOps:
         content = self.read_file(path)
         if not content:
             self.log("Cannot read /etc/fstab", "error"); return False
-        dev = next((it["dev"] for it in parse_mounts() if it["mp"] == mp), None)
+        dev = next((it["dev"] for it in self.mount_items if mp in it["mps"]), None)
         uuid = self._uuid_of(dev) if dev else ""
         lines = lines_in(content)
         idx, parts = self._fstab_find(lines, mp, uuid)
@@ -1310,7 +1319,10 @@ class SystemOps:
             return False
         opts = [o for o in parts[3].split(",") if not o.startswith("commit=")]
         if add:
-            opts.append("noatime")
+            if "noatime" not in opts:
+                opts.append("noatime")
+        else:
+            opts = [o for o in opts if o not in ("noatime", "nodiratime")]
         parts[3] = ",".join(opts)
         lines[idx] = "\t".join(parts)
         self.backup_file(path)
@@ -1327,7 +1339,7 @@ class SystemOps:
         content = self.read_file(path)
         if not content:
             self.log("Cannot read /etc/fstab", "error"); return False
-        dev = next((it["dev"] for it in parse_mounts() if it["mp"] == mp), None)
+        dev = next((it["dev"] for it in self.mount_items if mp in it["mps"]), None)
         uuid = self._uuid_of(dev) if dev else ""
         lines = lines_in(content)
         idx, parts = self._fstab_find(lines, mp, uuid)
@@ -1367,7 +1379,7 @@ class SystemOps:
         if self.dry_run:
             self.log("[DRY RUN] fstab commit=%s" % val, "warning"); return True
         ok = True
-        for m in getattr(self, "mount_items", []):
+        for m in self.mount_items:
             for mp in m["mps"]:
                 ok = self._mount_commit_edit(mp, val, True) and ok
         if ok:
@@ -1378,7 +1390,7 @@ class SystemOps:
         if self.dry_run:
             self.log("[DRY RUN] fstab remove commit", "warning"); return True
         ok = True
-        for m in getattr(self, "mount_items", []):
+        for m in self.mount_items:
             for mp in m["mps"]:
                 ok = self._mount_commit_edit(mp, "", False) and ok
         if ok:
@@ -1391,7 +1403,7 @@ class SystemOps:
                 content = f.read()
         except Exception:
             return False
-        if not getattr(self, "mount_items", None):
+        if not self.mount_items:
             return False
         for m in self.mount_items:
             found = False
@@ -1403,7 +1415,7 @@ class SystemOps:
                 if len(f2) >= 4 and f2[1] in m["mps"]:
                     if any(o.startswith("commit=") for o in f2[3].split(",")):
                         found = True
-                    break
+                        break
             if not found:
                 return False
         return True
@@ -1520,7 +1532,7 @@ class SystemOps:
                   'info() { apt show "$@"; }', ""]
         block += ["clean() {", "    sudo apt autoremove -y && sudo apt autoclean && sudo apt clean", "}", ""]
         block += ["space() {", "    df -h /", "}", ""]
-        block += ["fix() {", "    sudo apt --fix-broken install -y && sudo dpkg --configure -a", "}", ""]
+        block += ["fix() {", "    sudo apt --fix-broken install -y", "    sudo dpkg --configure -a", "}", ""]
         block += ["mem() {", "    sync && sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches' && free -h", "}", ""]
         block += ["serv() {", "    systemctl list-unit-files --type=service | less", "}", ""]
         block += ["update_time() {",
@@ -1595,8 +1607,8 @@ class SystemOps:
             self.log("[DRY RUN] create timer: %s" % desc, "warning"); return True
         if self.service_enabled("mintupdate-automation-upgrade.timer") == "enabled":
             self.log("Disabling mintupdate-automation-upgrade.timer", "info")
-        self.sudo_run(["systemctl", "disable", "--now",
-                       "mintupdate-automation-upgrade.timer"], ignore_error=True)
+            self.sudo_run(["systemctl", "disable", "--now",
+                           "mintupdate-automation-upgrade.timer"], ignore_error=True)
         if not self.write_file(svc, svc_c, chmod="644"):
             return False
         if not self.write_file(tmr, tmr_c, chmod="644"):
@@ -1797,10 +1809,6 @@ class SystemOps:
         return self.apply_autoupdate({"update_schedule": "Отключено"})
 
 
-def lines_in(content):
-    return content.splitlines()
-
-
 class Sig(QObject):
     log = pyqtSignal(str, str)
     statusbar = pyqtSignal(str)
@@ -1980,6 +1988,7 @@ class MainWindow(QMainWindow):
         self.steam_state = {}
         self._tasks = []
         self._ram_cache = None
+        self._info_dlg = None
         self.sched_lbl = None
         self.sudo = SudoManager()
         self.sudo.prompt_password = self._ask_password
@@ -2578,7 +2587,9 @@ class MainWindow(QMainWindow):
         c = self.colors()
         dlg = QDialog(self)
         dlg.setObjectName("infodlg")
-        dlg.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        dlg.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+        dlg.setModal(True)
+        self._info_dlg = dlg
         dlg.resize(min(720, self.screen_w - 60), min(560, self.screen_h - 80))
         vl = QVBoxLayout(dlg)
         vl.setContentsMargins(14, 14, 14, 14)
@@ -2598,13 +2609,16 @@ class MainWindow(QMainWindow):
         te.setOpenExternalLinks(True)
         te.setHtml(html)
         vl.addWidget(te)
-        dlg.show()
+        dlg.exec()
+        self._info_dlg = None
 
     def show_about(self):
         c = self.colors()
         dlg = QDialog(self)
         dlg.setObjectName("infodlg")
-        dlg.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        dlg.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+        dlg.setModal(True)
+        self._info_dlg = dlg
         dlg.resize(min(640, self.screen_w - 60), min(420, self.screen_h - 80))
         vl = QVBoxLayout(dlg)
         vl.setContentsMargins(18, 18, 18, 18)
@@ -2635,10 +2649,12 @@ class MainWindow(QMainWindow):
                    GITHUB_URL, GITHUB_URL))
         te.setHtml(html)
         vl.addWidget(te)
-        dlg.show()
+        dlg.exec()
+        self._info_dlg = None
 
     def _open_path(self, path):
         ops = SystemOps(self.sudo, self.state, lambda m, t: None, True)
+        ops.mount_items = self.mount_items
         content = ops.read_file(path) or ""
         self._show_viewer(path, content)
 
@@ -2689,6 +2705,7 @@ class MainWindow(QMainWindow):
                                     self.t("msg_nofile") + "\n" + "\n".join(cands))
             return
         ops = SystemOps(self.sudo, self.state, lambda m, t: None, True)
+        ops.mount_items = self.mount_items
         content = ops.read_file(target) or ""
         self._show_viewer(target, content)
 
@@ -2731,7 +2748,7 @@ class MainWindow(QMainWindow):
                 names.append(it.text())
         parts = ["%s — %s" % (n, SERVICES_META.get(n, {}).get(self.lang, ""))
                  for n in names[:3]]
-        self.serv_detail.setPlainText("\n\n".join(parts))
+        self.serv_detail.setPlainText("\n".join(parts))
 
     def apply_selected(self):
         if self.is_running:
@@ -3026,9 +3043,9 @@ class MainWindow(QMainWindow):
             "sysctl_cache": bool(re.search(r"^vm\.vfs_cache_pressure=50$", sysc, re.M))
                             or sv("vm.vfs_cache_pressure") == "50",
             "sysctl_numa": bool(re.search(r"^kernel\.numa_balancing=0$", sysc, re.M))
-                           or sv("kernel.numa_balancing") == "0",
+                            or sv("kernel.numa_balancing") == "0",
             "reisub": sv("kernel.sysrq") == "244"
-                        or ops.path_exists("/etc/sysctl.d/99-sysrq.conf"),
+                            or ops.path_exists("/etc/sysctl.d/99-sysrq.conf"),
             "ntsync": self.state.ntsync or ops.path_exists("/etc/modules-load.d/ntsync.conf"),
             "ntfs3": bool(re.search(r"^\s*#\s*blacklist\s+ntfs3\s*$", mint, re.M)),
             "commit": ops._commit_applied(),
@@ -3455,8 +3472,8 @@ class MainWindow(QMainWindow):
         try:
             with open(path, "w", encoding="utf-8") as f:
                 f.write("%s v%s\n%s\ndry_run=%s\n\n" % (APP_NAME, APP_VERSION,
-                                                        time.strftime("%Y-%m-%d %H:%M:%S"),
-                                                        self.dry_check.isChecked()))
+                                                       time.strftime("%Y-%m-%d %H:%M:%S"),
+                                                       self.dry_check.isChecked()))
                 for k in selected:
                     f.write("%s: %s\n" % (k, self.om(k)[0]))
                 f.write("\n[parameters]\ncorectrl_group=%s\nswap_value=%s\n"
