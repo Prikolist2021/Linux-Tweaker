@@ -1,26 +1,27 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Linux Tweaker v0.08.3
+Linux Tweaker v0.09
 Графическая оболочка тюнинга Linux Mint / Ubuntu / Debian на PyQt6.
 RU/EN, светлая/тёмная тема, детект применённых настроек,
 откат, бэкапы, mount-опции, симлинки compatdata для Steam, отладочный лог.
 """
 import sys, os, re, subprocess, time, shutil, glob, pwd, grp, threading, traceback
-from PyQt6.QtCore import (Qt, QObject, QThread, pyqtSignal, QTimer, QEvent,
+import faulthandler
+from PyQt6.QtCore import (Qt, QObject, QThread, pyqtSignal, QTimer,
                           QPropertyAnimation, QEasingCurve, QRect, QRectF)
 from PyQt6.QtGui import (QIcon, QPixmap, QPainter, QColor, QPen, QBrush,
                          QPainterPath, QLinearGradient, QTransform, QTextCursor)
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget,
                              QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
                              QCheckBox, QLineEdit, QComboBox, QTextEdit,
-                             QTextBrowser, QTableWidget, QTableWidgetItem,
-                             QAbstractItemView, QHeaderView, QScrollArea, QFrame,
-                             QInputDialog, QMessageBox, QFileDialog, QMenu, QDialog,
+                             QTableWidget, QTableWidgetItem, QAbstractItemView,
+                             QHeaderView, QScrollArea, QFrame, QInputDialog,
+                             QMessageBox, QMenu, QDialog,
                              QGraphicsOpacityEffect)
 
 APP_NAME = "Linux Tweaker"
-APP_VERSION = "0.08.3"
+APP_VERSION = "0.09"
 GITHUB_URL = "https://github.com/Prikolist2021/Linux-Tweaker"
 
 THEMES = {
@@ -46,80 +47,80 @@ THEMES = {
 
 OPTIONS_META = {
     "rsyslog": {
-        "ru": ("Отключить rsyslog", "Система постоянно пишет подробные журналы на диск. На домашнем ПК это лишняя нагрузка: отключение экономит ресурс SSD и слегка ускоряет работу. Краткие журналы при этом остаются в памяти (см. следующий пункт).", "Логи системы", "запись подробных журналов rsyslog на диск"),
-        "en": ("Disable rsyslog", "The system constantly writes detailed logs to disk. On a home PC this is unnecessary wear: disabling saves SSD life and slightly speeds things up. Short logs remain in RAM (see next item).", "System logs", "detailed rsyslog logging to disk")},
+        "ru": ("Отключить rsyslog", "Отключает запись подробных журналов на диск. Экономит место и уменьшает износ SSD. Работает сразу.", "Логи системы", "запись журналов на диск"),
+        "en": ("Disable rsyslog", "Stops writing detailed logs to disk. Saves space and SSD wear. Works immediately.", "System logs", "disk logging")},
     "journald": {
-        "ru": ("Логи в ОЗУ (journald)", "Переносит журналы systemd в оперативную память и ограничивает их 50 МБ. Диски не изнашиваются, старые логи не накапливаются годами.", "Логи системы", "хранение журналов systemd в ОЗУ (50 МБ)"),
-        "en": ("Logs in RAM (journald)", "Moves systemd journals to RAM and caps them at 50 MB. No disk wear, old logs do not pile up for years.", "System logs", "systemd journals stored in RAM (50 MB)")},
+        "ru": ("Логи в ОЗУ (journald)", "Переносит журнал системы в оперативную память и ограничивает его 50 МБ. Бережёт SSD. Работает сразу.", "Логи системы", "журнал в памяти"),
+        "en": ("Logs in RAM (journald)", "Moves the system log to RAM and caps it at 50 MB. Saves SSD. Works immediately.", "System logs", "log in RAM")},
     "audit": {
-        "ru": ("audit=0 (GRUB)", "Отключает встроенный аудит ядра: система перестаёт протоколировать каждый системный вызов. Меньше накладных расходов — чуть быстрее загрузка и работа.", "Ядро и загрузка", "аудит ядра (audit=0)"),
-        "en": ("audit=0 (GRUB)", "Disables kernel auditing: the kernel stops logging every syscall. Less overhead — slightly faster boot and runtime.", "Kernel & boot", "kernel auditing (audit=0)")},
+        "ru": ("audit=0 (GRUB)", "Отключает фоновую запись каждого действия системы. Убирает лишнюю нагрузку. Нужна перезагрузка.", "Ядро и загрузка", "фоновая запись действий"),
+        "en": ("audit=0 (GRUB)", "Stops background logging of every system action. Removes extra load. Needs reboot.", "Kernel & boot", "background action logging")},
     "raid": {
-        "ru": ("raid=noautodetect (GRUB)", "Если у вас нет RAID-массива, при каждой загрузке система тратит время на его поиск. Параметр отключает этот поиск — загрузка быстрее.", "Ядро и загрузка", "поиск RAID при загрузке"),
-        "en": ("raid=noautodetect (GRUB)", "If you have no RAID array, the system wastes boot time probing for one. This option skips the probe — faster boot.", "Kernel & boot", "RAID probing at boot")},
+        "ru": ("raid=noautodetect (GRUB)", "Пропускает поиск RAID при загрузке, если его нет. Ускоряет включение. Нужна перезагрузка.", "Ядро и загрузка", "поиск RAID"),
+        "en": ("raid=noautodetect (GRUB)", "Skips RAID probe at boot when you have none. Speeds up startup. Needs reboot.", "Kernel & boot", "RAID probe")},
     "nmi_watchdog": {
-        "ru": ("nmi_watchdog=0 (GRUB)", "Отключает NMI-watchdog ядра — периодические немаскируемые прерывания для отладки. Дома не нужны и дают микро-фризы в играх.", "Ядро и загрузка", "nmi_watchdog=0"),
-        "en": ("nmi_watchdog=0 (GRUB)", "Disables the kernel NMI watchdog — periodic non-maskable debugging interrupts. Unneeded at home and can cause micro-stutters in games.", "Kernel & boot", "nmi_watchdog=0")},
+        "ru": ("nmi_watchdog=0 (GRUB)", "Отключает служебные прерывания отладки. Убирает микро-фризы в играх. Нужна перезагрузка.", "Ядро и загрузка", "прерывания отладки"),
+        "en": ("nmi_watchdog=0 (GRUB)", "Disables debug interrupts. Removes micro-stutters in games. Needs reboot.", "Kernel & boot", "debug interrupts")},
     "corectrl": {
-        "ru": ("CoreCtrl (Polkit)", "Правило Polkit для программы CoreCtrl: позволяет управлять частотами и вентиляторами видеокарты AMD без ввода пароля. В поле указывается группа пользователей, которым это разрешено (по умолчанию — ваша).", "Видеокарта и графика", "polkit-правило для CoreCtrl"),
-        "en": ("CoreCtrl (Polkit)", "Polkit rule for CoreCtrl: allows controlling AMD GPU clocks and fans without a password. The field sets the user group allowed to do so (defaults to yours).", "GPU & graphics", "Polkit rule for CoreCtrl")},
+        "ru": ("CoreCtrl (Polkit)", "Разрешает управлять вентиляторами и частотами AMD без пароля. Работает сразу.", "Видеокарта и графика", "управление AMD без пароля"),
+        "en": ("CoreCtrl (Polkit)", "Allows controlling AMD fans and clocks without a password. Works immediately.", "GPU & graphics", "AMD control without password")},
     "ppfeaturemask": {
-        "ru": ("amdgpu.ppfeaturemask", "Разблокирует скрытые возможности управления питанием AMD GPU (нужно на старых ядрах). Открывает CoreCtrl полный контроль над частотами.", "Видеокарта и графика", "разблокировка управления питанием AMD"),
-        "en": ("amdgpu.ppfeaturemask", "Unlocks hidden AMD GPU power-management features (needed on older kernels). Gives CoreCtrl full clock control.", "GPU & graphics", "AMD power management unlock")},
+        "ru": ("amdgpu.ppfeaturemask", "Открывает драйверу AMD полный контроль над питанием карты. Нужна перезагрузка.", "Видеокарта и графика", "контроль питания AMD"),
+        "en": ("amdgpu.ppfeaturemask", "Gives the AMD driver full power control of the card. Needs reboot.", "GPU & graphics", "AMD power control")},
     "nvidia_modeset": {
-        "ru": ("nvidia-drm.modeset=1 (GRUB)", "Включает KMS для драйвера NVIDIA: нужно для Wayland, плавного переключения режимов и корректного композитинга.", "Видеокарта и графика", "nvidia-drm.modeset=1"),
-        "en": ("nvidia-drm.modeset=1 (GRUB)", "Enables KMS for the NVIDIA driver: needed for Wayland, smooth mode switching and correct compositing.", "GPU & graphics", "nvidia-drm.modeset=1")},
+        "ru": ("nvidia-drm.modeset=1 (GRUB)", "Включает корректный вывод NVIDIA для Wayland и переключения режимов. Нужна перезагрузка.", "Видеокарта и графика", "вывод NVIDIA"),
+        "en": ("nvidia-drm.modeset=1 (GRUB)", "Enables proper NVIDIA output for Wayland and mode switching. Needs reboot.", "GPU & graphics", "NVIDIA output")},
     "vrr": {
-        "ru": ("VRR/FreeSync", "Включает переменную частоту обновления (FreeSync) для AMD: картинка в играх без разрывов при плавающем FPS. Работает в X11 с драйвером amdgpu.", "Видеокарта и графика", "VRR/FreeSync (X11, amdgpu)"),
-        "en": ("VRR/FreeSync", "Enables variable refresh rate (FreeSync) on AMD: tear-free gaming at fluctuating FPS. Works in X11 with the amdgpu driver.", "GPU & graphics", "VRR/FreeSync (X11, amdgpu)")},
+        "ru": ("VRR/FreeSync", "Убирает разрывы картинки в играх на мониторе с FreeSync. Нужен перезаход в сеанс.", "Видеокарта и графика", "плавная картинка"),
+        "en": ("VRR/FreeSync", "Removes screen tearing in games on a FreeSync monitor. Requires re-login.", "GPU & graphics", "smooth picture")},
     "radv": {
-        "ru": ("RADV_PERFTEST=sam", "Включает в драйвере RADV оптимизацию SAM / Resizable BAR: процессор получает доступ ко всей видеопамяти сразу — небольшой прирост FPS в играх.", "Видеокарта и графика", "SAM / Resizable BAR в RADV"),
-        "en": ("RADV_PERFTEST=sam", "Enables SAM / Resizable BAR optimization in the RADV driver: the CPU accesses all VRAM at once — a small FPS gain in games.", "GPU & graphics", "SAM / Resizable BAR in RADV")},
+        "ru": ("RADV_PERFTEST=sam", "Даёт процессору доступ ко всей видеопамяти сразу. Небольшой прирост FPS. Нужен перезаход.", "Видеокарта и графика", "доступ ко всей видеопамяти"),
+        "en": ("RADV_PERFTEST=sam", "Gives the CPU access to all VRAM at once. Small FPS gain. Requires re-login.", "GPU & graphics", "full VRAM access")},
     "mesa": {
-        "ru": ("MESA_SHADER_CACHE=4G", "Увеличивает кэш скомпилированных шейдеров до 4 ГБ. Игры и GL-приложения реже перекомпилируют шейдеры — меньше подтормаживаний в первые минуты игры.", "Видеокарта и графика", "кэш шейдеров MESA 4 ГБ"),
-        "en": ("MESA_SHADER_CACHE=4G", "Raises the compiled shader cache to 4 GB. Games and GL apps recompile shaders less often — fewer hitches in the first minutes of play.", "GPU & graphics", "MESA shader cache 4 GB")},
+        "ru": ("MESA_SHADER_CACHE=4G", "Увеличивает кэш шейдеров, игры меньше подтормаживают в первые минуты. Нужен перезаход.", "Видеокарта и графика", "кэш шейдеров"),
+        "en": ("MESA_SHADER_CACHE=4G", "Enlarges the shader cache so games stutter less at start. Requires re-login.", "GPU & graphics", "shader cache")},
     "pipewire": {
-        "ru": ("PipeWire (звук)", "Увеличивает буферы (кванты) звукового сервера PipeWire. Убирает треск, щелчки и прерывистый звук в наушниках и колонках.", "Звук", "увеличенные буферы PipeWire"),
-        "en": ("PipeWire (sound)", "Increases PipeWire sound-server quanta. Removes crackling, pops and stuttering audio in headphones and speakers.", "Sound", "increased PipeWire quanta")},
+        "ru": ("PipeWire (звук)", "Убирает треск и щелчки звука, увеличив буферы звукового сервера. Нужен перезаход в сеанс.", "Звук", "чистый звук"),
+        "en": ("PipeWire (sound)", "Removes sound crackling by enlarging sound-server buffers. Requires re-login.", "Sound", "clean sound")},
     "bbr": {
-        "ru": ("TCP BBR", "Включает алгоритм управления перегрузками BBR + fq: выше реальная скорость и ниже задержки на нестабильных каналах.", "Сеть", "TCP BBR + fq"),
-        "en": ("TCP BBR", "Enables BBR congestion control + fq: higher real throughput and lower latency on unstable links.", "Network", "TCP BBR + fq")},
+        "ru": ("TCP BBR", "Ускоряет интернет и убирает задержки на нестабильных каналах. Работает сразу.", "Сеть", "быстрый интернет"),
+        "en": ("TCP BBR", "Speeds up internet and cuts latency on unstable links. Works immediately.", "Network", "faster internet")},
     "swap": {
-        "ru": ("Тюнинг swap", "Настраивает vm.swappiness — насколько охотно система сбрасывает память в swap. Для сжатого zram выгодно 150, для диска/SSD — 10: меньше лишних обращений к диску.", "Память и swap", "настройка vm.swappiness"),
-        "en": ("Swap tuning", "Sets vm.swappiness — how eagerly memory is pushed to swap. 150 suits compressed zram, 10 suits disk/SSD: fewer pointless disk accesses.", "Memory & swap", "vm.swappiness tuning")},
+        "ru": ("Тюнинг swap", "Настраивает, как охотно система выгружает память в подкачку. Меньше обращений к диску. Работает сразу.", "Память и swap", "поведение подкачки"),
+        "en": ("Swap tuning", "Sets how eagerly memory goes to swap. Fewer disk accesses. Works immediately.", "Memory & swap", "swap behaviour")},
     "zram": {
-        "ru": ("zram-swap", "Создаёт сжатый swap в оперативке (zram) через zram-generator: быстрее дискового swap, экономит SSD. Требует пакет zram-generator.", "Память и swap", "zram-swap"),
-        "en": ("zram-swap", "Creates compressed swap in RAM (zram) via zram-generator: faster than disk swap, saves SSD. Requires zram-generator package.", "Memory & swap", "zram-swap")},
+        "ru": ("zram-swap", "Создаёт сжатую память в ОЗУ вместо дискового swap. Ускоряет работу при нехватке памяти. Нужна перезагрузка.", "Память и swap", "сжатая память в ОЗУ"),
+        "en": ("zram-swap", "Creates compressed memory in RAM instead of disk swap. Speeds up low-RAM use. Needs reboot.", "Memory & swap", "compressed RAM")},
     "zswap": {
-        "ru": ("zswap (GRUB)", "Включает zswap — сжатый кэш перед дисковым swap: меньше обращений к диску, быстрее отклик при нехватке памяти. Совместим с обычным swap и гибернацией.", "Память и swap", "zswap"),
-        "en": ("zswap (GRUB)", "Enables zswap — a compressed cache in front of disk swap: fewer disk accesses, faster response under memory pressure. Works with normal swap and hibernation.", "Memory & swap", "zswap")},
+        "ru": ("zswap (GRUB)", "Держит сжатую память в ОЗУ перед записью в swap. Меньше обращений к диску. Нужна перезагрузка.", "Память и swap", "сжатый кэш перед swap"),
+        "en": ("zswap (GRUB)", "Keeps compressed memory in RAM before swap. Fewer disk accesses. Needs reboot.", "Memory & swap", "compressed cache before swap")},
     "thp": {
-        "ru": ("Огромные страницы памяти", "Обычная память выдаётся программами маленькими кусочками по 4 КБ — на больших объёмах это накладно. «Огромные страницы» по 2 МБ ускоряют игры и базы данных. Режим madvise даёт их только тем программам, которые сами попросят (самый безопасный вариант); always — всем подряд; never — отключено. Рекомендуется madvise.", "Память и swap", "режим огромных страниц (THP)"),
-        "en": ("Huge memory pages", "Normal memory is handed to programs in small 4 KB chunks — costly at large volumes. 2 MB \"huge pages\" speed up games and databases. Mode madvise gives them only to programs that explicitly ask (safest); always — to everyone; never — off. madvise is recommended.", "Memory & swap", "huge pages mode (THP)")},
+        "ru": ("Крупные блоки памяти (THP)", "Система может выдавать память крупными блоками (2 МБ) вместо мелких (4 КБ). Это ускоряет игры и программы. Значения: madvise — только по запросу (рекомендуется), always — всем подряд, never — выключено.", "Память и swap", "крупные блоки памяти"),
+        "en": ("Large memory blocks (THP)", "The system can hand out memory in large 2 MB blocks instead of small 4 KB ones. This speeds up games and apps. Values: madvise — on request only (recommended), always — to everyone, never — off.", "Memory & swap", "large memory blocks")},
     "sysctl_cache": {
-        "ru": ("Кэш VFS (sysctl)", "vfs_cache_pressure=50: система дольше держит кэш каталогов и файлов в памяти, меньше повторных чтений с диска. Ускоряет работу с файлами.", "Ядро и загрузка", "vfs_cache_pressure=50"),
-        "en": ("VFS cache (sysctl)", "vfs_cache_pressure=50: the system keeps directory/file cache in RAM longer, fewer disk re-reads. Speeds up file operations.", "Kernel & boot", "vfs_cache_pressure=50")},
+        "ru": ("Кэш VFS (sysctl)", "Дольше держит кэш файлов в памяти, файлы открываются быстрее. Работает сразу.", "Ядро и загрузка", "кэш файлов"),
+        "en": ("VFS cache (sysctl)", "Keeps file cache in RAM longer so files open faster. Works immediately.", "Kernel & boot", "file cache")},
     "sysctl_numa": {
-        "ru": ("Миграция NUMA (sysctl)", "kernel.numa_balancing=0: отключает автоматическую миграцию страниц памяти между ядрами CPU. Уменьшает задержки в играх и чувствительных к latency задачах.", "Ядро и загрузка", "numa_balancing=0"),
-        "en": ("NUMA migration (sysctl)", "kernel.numa_balancing=0: disables automatic memory page migration between CPU cores. Reduces stalls in games and latency-sensitive tasks.", "Kernel & boot", "numa_balancing=0")},
+        "ru": ("Миграция NUMA (sysctl)", "Отключает перенос памяти между ядрами, убирает паузы в играх. Работает сразу.", "Ядро и загрузка", "перенос памяти"),
+        "en": ("NUMA migration (sysctl)", "Stops memory moving between cores, removes game stalls. Works immediately.", "Kernel & boot", "memory moving")},
     "reisub": {
-        "ru": ("REISUB (Magic SysRq)", "Включает аварийные клавиши SysRq (маска 244): при зависании удерживайте Alt+PrtSc и по порядку нажимайте R E I S U B для безопасного завершения процессов, синхронизации и перезагрузки без жёсткого сброса питания.", "Ядро и загрузка", "kernel.sysrq=244"),
-        "en": ("REISUB (Magic SysRq)", "Enables SysRq emergency keys (mask 244): on a freeze hold Alt+PrtSc and press R E I S U B in order to safely terminate processes, sync and reboot without a hard reset.", "Kernel & boot", "kernel.sysrq=244")},
+        "ru": ("REISUB (Magic SysRq)", "Даёт безопасную перезагрузку при полном зависании через Alt+PrtSc и клавиши R E I S U B. Работает сразу.", "Ядро и загрузка", "безопасная перезагрузка"),
+        "en": ("REISUB (Magic SysRq)", "Enables safe reboot on full freeze via Alt+PrtSc and R E I S U B keys. Works immediately.", "Kernel & boot", "safe reboot")},
     "ntsync": {
-        "ru": ("ntsync (модуль ядра)", "Включает модуль ntsync — новый ускоритель синхронизации для Wine/Proton. Заметный прирост FPS в части игр. Требуется ядро 6.14+ или с патчем ntsync.", "Игры и совместимость", "модуль ядра ntsync"),
-        "en": ("ntsync (kernel module)", "Enables the ntsync module — a new synchronization accelerator for Wine/Proton. Noticeable FPS gain in some games. Needs kernel 6.14+ or an ntsync-patched one.", "Gaming & compatibility", "ntsync kernel module")},
+        "ru": ("ntsync (модуль ядра)", "Ускоряет игры под Wine/Proton за счёт быстрой синхронизации потоков. Работает сразу (нужно ядро 6.14+).", "Игры и совместимость", "быстрые игры под Wine"),
+        "en": ("ntsync (kernel module)", "Speeds up Wine/Proton games via faster thread sync. Works immediately (needs kernel 6.14+).", "Gaming & compatibility", "faster Wine games")},
     "ntfs3": {
-        "ru": ("ntfs3 драйвер", "Включает быстрый встроенный драйвер ntfs3 для NTFS-дисков вместо медленного ntfs-3g. Linux Mint по умолчанию его блокирует — опция снимает блокировку.", "Диски и файловые системы", "быстрый драйвер ntfs3"),
-        "en": ("ntfs3 driver", "Enables the fast in-kernel ntfs3 driver for NTFS disks instead of slow ntfs-3g. Linux Mint blocks it by default — this option lifts the block.", "Drives & filesystems", "fast ntfs3 driver")},
+        "ru": ("ntfs3 драйвер", "Включает быстрый драйвер NTFS-дисков вместо медленного. ВНИМАНИЕ: только если у вас есть NTFS-диски. Нужна перезагрузка.", "Диски и файловые системы", "быстрый NTFS"),
+        "en": ("ntfs3 driver", "Enables the fast NTFS driver instead of the slow one. WARNING: only if you have NTFS disks. Needs reboot.", "Drives & filesystems", "fast NTFS")},
     "commit": {
-        "ru": ("commit=NN (fstab)", "Увеличивает интервал сброса метаданных ext4 на диск (по умолчанию 60 с): меньше мелких записей. Значение задаётся самим.", "Диски и файловые системы", "commit=NN"),
-        "en": ("commit=NN (fstab)", "Increases ext4 metadata commit interval (default 60 s): fewer small writes. Value is editable.", "Drives & filesystems", "commit=NN")},
+        "ru": ("commit=NN (fstab)", "Реже сбрасывает служебную информацию на диск, меньше износа SSD. ВНИМАНИЕ: при сбое питания возможна потеря последних записей. Нужна перезагрузка.", "Диски и файловые системы", "реже запись на диск"),
+        "en": ("commit=NN (fstab)", "Flushes disk metadata less often, less SSD wear. WARNING: power loss may lose last writes. Needs reboot.", "Drives & filesystems", "less disk writing")},
     "aliases": {
-        "ru": ("Команды в .bashrc", "Добавляет удобные команды терминала: upd, upgr, update_all (обновление всей системы), clean (очистка), space (место на диске), mem (очистка памяти) и другие.", "Удобство", "команды upd/upgr/clean в .bashrc"),
-        "en": ("Commands in .bashrc", "Adds handy shell commands: upd, upgr, update_all (full system update), clean, space (disk free), mem (memory clean) and more.", "Convenience", "upd/upgr/clean commands in .bashrc")},
+        "ru": ("Команды в .bashrc", "Добавляет удобные команды терминала для обновления и очистки. Работает в новых терминалах.", "Удобство", "команды терминала"),
+        "en": ("Commands in .bashrc", "Adds handy terminal commands for updating and cleaning. Works in new terminals.", "Convenience", "terminal commands")},
     "autoupdate": {
-        "ru": ("Автообновления", "Создаёт systemd-таймер, который по выбранному расписанию сам обновляет APT-пакеты и Flatpak без вашего участия. ВНИМАНИЕ: отключите встроенное автообновление Mint (mintupdate), иначе обновления будут выполняться дважды.", "Обновления", "systemd-таймер автообновлений"),
-        "en": ("Auto-updates", "Creates a systemd timer that updates APT packages and Flatpak on the chosen schedule without you. NOTE: disable the built-in Mint auto-update (mintupdate), otherwise updates will run twice.", "Updates", "systemd auto-update timer")},
+        "ru": ("Автообновления", "Сам обновляет систему и Flatpak по расписанию. ВНИМАНИЕ: отключите встроенное автообновление Mint. Работает сразу.", "Обновления", "автообновление по расписанию"),
+        "en": ("Auto-updates", "Auto-updates system and Flatpak on schedule. WARNING: disable Mint's built-in auto-update. Works immediately.", "Updates", "scheduled auto-update")},
 }
 
 CAT_ORDER = {
@@ -132,64 +133,103 @@ CAT_ORDER = {
 }
 
 OPTIONS_HELP = {
-    "rsyslog": {"ru": "rsyslog — служба, которая постоянно дописывает системные журналы в файлы на диске (/var/log). На домашнем ПК эти файлы почти никто не читает, зато диск получает лишние операции записи, а SSD изнашивается. Отключение безопасно: все важные сообщения останутся в журнале systemd, который читается командой journalctl.", "en": "rsyslog constantly appends system logs to files on disk (/var/log). On a home PC nobody reads these files, yet the disk gets extra write operations and SSD wear. Disabling is safe: all important messages remain in the systemd journal, readable via journalctl."},
-    "journald": {"ru": "journald — современный журнал systemd. Перенос его в оперативную память (Storage=volatile) означает, что журналы вообще не пишутся на диск и исчезают после перезагрузки — это бережёт SSD. Ограничение 50 МБ не даёт журналам съесть много памяти.", "en": "journald is the modern systemd log. Moving it to RAM (Storage=volatile) means logs are never written to disk and vanish after reboot — this saves SSD wear. The 50 MB cap prevents logs from eating much memory."},
-    "audit": {"ru": "audit — подсистема ядра, которая протоколирует каждый системный вызов (нужна в корпоративных средах для безопасности). Дома она только создаёт накладные расходы и лишние записи. Отключение (audit=0) слегка ускоряет систему.", "en": "audit is a kernel subsystem logging every syscall (needed in corporate security environments). At home it only adds overhead and noise. Disabling (audit=0) slightly speeds up the system."},
-    "raid": {"ru": "При каждой загрузке ядро ищет RAID-массивы (объединения дисков). Если у вас их нет — поиск тратит время впустую. raid=noautodetect отключает поиск и ускоряет загрузку. НЕ включайте, если реально используете RAID!", "en": "At every boot the kernel probes for RAID arrays (combined disks). If you have none, the probe wastes time. raid=noautodetect skips the probe and speeds up boot. DO NOT enable if you actually use RAID!"},
-    "nmi_watchdog": {"ru": "NMI-watchdog — механизм ядра для отладки зависаний: он периодически шлёт процессору немаскируемые прерывания. На домашнем ПК это не нужно, а прерывания дают микро-фризы в играх и нагрузках. Отключение (nmi_watchdog=0) убирает их.", "en": "The NMI watchdog is a kernel facility for debugging hangs: it periodically sends non-maskable interrupts to the CPU. On a home PC it is unneeded, and the interrupts cause micro-stutters in games and loads. Disabling (nmi_watchdog=0) removes them."},
-    "corectrl": {"ru": "CoreCtrl — программа для тонкой настройки AMD GPU (частоты, вентиляторы, лимиты питания). По умолчанию её действия требуют пароль администратора. Этот твик создаёт правило Polkit, которое разрешает вашей группе пользователей управлять GPU без пароля.", "en": "CoreCtrl is a tool for fine-tuning AMD GPU (clocks, fans, power limits). By default its actions require the admin password. This tweak creates a Polkit rule allowing your user group to control the GPU without a password."},
-    "ppfeaturemask": {"ru": "Драйвер amdgpu на старых ядрах блокирует часть функций управления питанием видеокарты. Параметр amdgpu.ppfeaturemask=0xffffffff снимает блокировку, и CoreCtrl получает полный контроль над частотами.", "en": "On older kernels the amdgpu driver blocks some GPU power-management features. amdgpu.ppfeaturemask=0xffffffff lifts the block so CoreCtrl gets full clock control."},
-    "nvidia_modeset": {"ru": "nvidia-drm.modeset=1 включает kernel modesetting для проприетарного драйвера NVIDIA: без него не работает Wayland, возможны проблемы с переключением видеорежимов и композитором.", "en": "nvidia-drm.modeset=1 enables kernel modesetting for the proprietary NVIDIA driver: without it Wayland does not work and mode switching/compositing may misbehave."},
-    "vrr": {"ru": "VRR (FreeSync) позволяет монитору обновляться синхронно с кадрами игры, убирая разрывы картинки при плавающем FPS. Работает только в X11 с драйвером amdgpu и на мониторе с поддержкой FreeSync.", "en": "VRR (FreeSync) lets the monitor refresh in sync with game frames, removing tearing at fluctuating FPS. Works only in X11 with the amdgpu driver and a FreeSync-capable monitor."},
-    "radv": {"ru": "SAM / Resizable BAR даёт процессору доступ ко всей видеопамяти сразу, а не кусками, — небольшой прирост FPS в играх. Параметр RADV_PERFTEST=sam включает оптимизацию в открытом драйвере RADV.", "en": "SAM / Resizable BAR gives the CPU access to all VRAM at once instead of chunks — a small FPS gain. RADV_PERFTEST=sam enables the optimization in the open RADV driver."},
-    "mesa": {"ru": "MESA кэширует скомпилированные шейдеры игр. По умолчанию кэш мал, игры часто перекомпилируют шейдеры — отсюда подтормаживания в первые минуты. Увеличение кэша до 4 ГБ уменьшает эти паузы.", "en": "MESA caches compiled game shaders. The default cache is small so games recompile shaders often, causing hitches in the first minutes. Raising the cache to 4 GB reduces these pauses."},
-    "pipewire": {"ru": "PipeWire — звуковой сервер. Малые буферы дают низкую задержку, но на некоторых системах вызывают треск, щелчки и прерывистый звук. Увеличение буферов (квантов) убирает артефакты ценой чуть большей задержки (на практике незаметно).", "en": "PipeWire is the sound server. Small buffers give low latency but on some systems cause crackling, pops and stuttering. Increasing the quanta removes artifacts at the cost of slightly higher latency (imperceptible in practice)."},
-    "bbr": {"ru": "BBR — современный алгоритм управления перегрузками TCP от Google. Вместе с очередью fq он даёт более высокую реальную пропускную способность и меньшие задержки, особенно на нестабильных каналах (Wi-Fi, VPN, дальние серверы).", "en": "BBR is Google's modern TCP congestion control. Together with the fq queue it gives higher real throughput and lower latency, especially on unstable links (Wi-Fi, VPN, remote servers)."},
-    "swap": {"ru": "vm.swappiness (0–200) управляет тем, как охотно система вытесняет память в swap. Высокое значение (150) выгодно для сжатого zram (это память, обращение дешёвое), низкое (10) — для диска/SSD, чтобы не дёргать диск лишний раз.", "en": "vm.swappiness (0–200) controls how eagerly memory is pushed to swap. A high value (150) suits compressed zram (it is RAM, cheap to access); a low value (10) suits disk/SSD to avoid needless disk access."},
-    "zram": {"ru": "zram создаёт сжатое блочное устройство прямо в оперативной памяти и использует его как swap: это быстрее дискового swap и бережёт SSD. Для работы нужен пакет zram-generator (если его нет — опция показана неактивной). Конфиг создаётся сразу, устройство появляется после перезагрузки.", "en": "zram creates a compressed block device right in RAM and uses it as swap: faster than disk swap and saves SSD wear. It requires the zram-generator package (if missing, the option is shown disabled). The config is created now; the device appears after reboot."},
-    "zswap": {"ru": "zswap — сжатый кэш в памяти ПЕРЕД дисковым swap: страницы сначала сжимаются в RAM и только при переполнении уходят на диск. Меньше обращений к диску, быстрее отклик при нехватке памяти; совместим с обычным swap и гибернацией.", "en": "zswap is a compressed cache in RAM in front of disk swap: pages compress in RAM first and only go to disk on overflow. Fewer disk accesses, faster response under memory pressure; works with normal swap and hibernation."},
-    "thp": {"ru": "Память выдаётся программами маленькими страницами по 4 КБ. При больших объёмах (игры, базы данных) это создаёт накладные расходы. «Огромные страницы» по 2 МБ уменьшают эти накладные расходы и ускоряют работу. Режим madvise означает: огромные страницы выдаются только тем программам, которые сами явно попросят — это самый безопасный вариант. always — выдавать всем (иногда даёт микро-задержки), never — отключить совсем. Значение передаётся через GRUB и вступает в силу после перезагрузки.", "en": "Memory is handed to programs in small 4 KB pages. At large volumes (games, databases) this adds overhead. 2 MB \"huge pages\" reduce that overhead and speed things up. Mode madvise means: huge pages are given only to programs that explicitly ask — the safest option. always — give to everyone (can cause micro-stalls), never — disable entirely. The value is passed via GRUB and takes effect after reboot."},
-    "sysctl_cache": {"ru": "vfs_cache_pressure говорит ядру, как агрессивно освобождать кэш каталогов и файлов. Значение 50 (вместо 100) значит, что кэш держится дольше и файлы открываются быстрее, особенно при работе с множеством файлов.", "en": "vfs_cache_pressure tells the kernel how aggressively to free directory/file cache. Value 50 (instead of 100) keeps the cache longer so files open faster, especially with many files."},
-    "sysctl_numa": {"ru": "kernel.numa_balancing автоматически переносит страницы памяти между ядрами CPU (полезно на серверах с NUMA). На домашних ПК это чаще вредит: миграция вызывает паузы. Отключение (0) убирает паузы.", "en": "kernel.numa_balancing automatically migrates memory pages between CPU cores (useful on NUMA servers). On home PCs it usually hurts: migration causes stalls. Disabling (0) removes stalls."},
-    "reisub": {"ru": "kernel.sysrq=244 разрешает аварийные функции ядра Magic SysRq, из которых состоит последовательность REISUB: R (вернуть клавиатуру), E/I (корректно завершить/убить процессы), S (синхронизация дисков), U (remount read-only), B (перезагрузка). При полном зависании удерживайте Alt+PrtSc и нажимайте R E I S U B по порядку с интервалом 1–2 с — система перезагрузится безопасно, без повреждения файлов. Маска 244 не включает опасные отладочные функции.", "en": "kernel.sysrq=244 enables the Magic SysRq emergency functions that make up REISUB: R (unraw keyboard), E/I (terminate/kill processes), S (sync disks), U (remount read-only), B (reboot). On a full freeze hold Alt+PrtSc and press R E I S U B in order 1–2 s apart — the system reboots safely without file corruption. Mask 244 excludes dangerous debug functions."},
-    "ntsync": {"ru": "ntsync — новый модуль ядра, ускоряющий синхронизацию потоков в Wine/Proton: игры под Windows используют много примитивов синхронизации, и ntsync делает их быстрее (заметный прирост FPS в части игр). Требуется ядро 6.14+ или патченное.", "en": "ntsync is a new kernel module speeding up thread synchronization in Wine/Proton: Windows games use many sync primitives and ntsync makes them faster (noticeable FPS gain in some games). Needs kernel 6.14+ or patched."},
-    "ntfs3": {"ru": "ntfs3 — современный встроенный драйвер NTFS (быстрый). Linux Mint по умолчанию блокирует его и использует медленный ntfs-3g. Опция снимает блокировку. Уже смонтированные диски перейдут на ntfs3 после перезагрузки или перемонтирования.", "en": "ntfs3 is the modern in-kernel NTFS driver (fast). Linux Mint blocks it by default and uses slow ntfs-3g. This option lifts the block. Already mounted disks switch to ntfs3 after reboot or remount."},
-    "commit": {"ru": "commit=NN задаёт интервал (в секундах), с которым ext4 сбрасывает метаданные на диск. Больше значение — меньше мелких записей и меньше износа SSD, но чуть выше риск потери последних метаданных при внезапном отключении питания. По умолчанию 60.", "en": "commit=NN sets the interval (seconds) at which ext4 flushes metadata to disk. Higher value — fewer small writes and less SSD wear, but slightly higher risk of losing last metadata on sudden power loss. Default 60."},
-    "aliases": {"ru": "Добавляет в ваш .bashrc готовые команды: upd (обновить списки), upgr (обновить пакеты), update_all (полное обновление), clean (очистка), space (место на диске), mem (очистка памяти) и другие. Появятся в НОВЫХ терминалах или после команды source ~/.bashrc.", "en": "Adds ready commands to your .bashrc: upd (update lists), upgr (upgrade packages), update_all (full update), clean (cleanup), space (disk free), mem (memory clean) and others. They appear in NEW terminals or after source ~/.bashrc."},
-    "autoupdate": {"ru": "Создаёт systemd-таймер, который по расписанию обновляет систему и Flatpak. ВАЖНО: отключите встроенное автообновление Mint (mintupdate / автоматизацию), иначе обновления будут запускаться дважды и конфликтовать.", "en": "Creates a systemd timer that updates the system and Flatpak on schedule. IMPORTANT: disable the built-in Mint auto-update (mintupdate automation), otherwise updates run twice and conflict."},
-    "mount": {"ru": "Опция монтирования noatime отключает обновление времени последнего доступа к файлам и каталогам (nodiratime — её историческое подмножество, отдельно не требуется). Каждый файл при чтении больше не вызывает служебную запись на диск: меньше износа SSD и быстрее чтение. Вступает в силу после перезагрузки.", "en": "The noatime mount option disables updating last-access times for files and directories (nodiratime is its historical subset, not needed separately). Each read no longer causes a service write to disk: less SSD wear and faster reads. Takes effect after reboot."},
-    "steam": {"ru": "Игры Steam под Proton хранят данные (префиксы) в ~/.steam/steam/steamapps/compatdata. Если библиотека Steam лежит на другом диске (NTFS), игра не находит эти данные и может не запускаться или терять сохранения. Симлинк compatdata в библиотеке указывает на домашнюю папку, и игры работают корректно.", "en": "Steam Proton games store data (prefixes) in ~/.steam/steam/steamapps/compatdata. If a Steam library is on another disk (NTFS), games cannot find this data and may fail to start or lose saves. A compatdata symlink in the library points to the home folder so games work correctly."},
+    "rsyslog": {"ru": "Что это: rsyslog — программа, которая постоянно записывает подробные журналы системы в файлы на диске.\nЗачем включать: диск перестанет получать лишние записи, освободится место и уменьшится износ SSD. Важные сообщения останутся в журнале systemd (команда journalctl).\nКому не нужно: если вы разбираете проблемы системы по старым файлам журналов.\nЧто дальше: работает сразу.",
+                "en": "What it is: rsyslog constantly writes detailed system logs to files on disk.\nWhy enable: the disk stops getting extra writes, space frees up and SSD wear drops. Important messages stay in the systemd journal (journalctl).\nWho does not need it: if you troubleshoot using old log files.\nWhat happens next: works immediately."},
+    "journald": {"ru": "Что это: журнал systemd — это запись всех событий системы: запусков служб, ошибок, подключений устройств. Обычно он хранится на диске.\nЗачем включать: система перестанет записывать журнал на диск и будет держать его в оперативной памяти. Это уменьшает износ SSD и освобождает место. Размер ограничен 50 МБ, чтобы не занять всю память.\nКому не нужно: если вы разбираетесь с проблемами по старым логам — они исчезнут после перезагрузки.\nЧто дальше: работает сразу.",
+                "en": "What it is: the systemd journal records all system events: service starts, errors, device plugs. It usually lives on disk.\nWhy enable: the system stops writing the journal to disk and keeps it in RAM. This cuts SSD wear and frees space. It is capped at 50 MB so it cannot eat all memory.\nWho does not need it: if you troubleshoot using old logs — they vanish after reboot.\nWhat happens next: works immediately."},
+    "audit": {"ru": "Что это: audit — фоновая служба ядра, которая записывает каждое действие системы (нужна в офисах для безопасности).\nЗачем включать: дома эта запись не нужна, она только создаёт дополнительную нагрузку. Отключение слегка ускоряет систему.\nКому не нужно: если вам нужны журналы безопасности для проверок.\nЧто дальше: требуется перезагрузка.",
+                "en": "What it is: audit is a background kernel service logging every system action (needed in offices for security).\nWhy enable: at home this logging is unneeded and only adds extra load. Disabling slightly speeds up the system.\nWho does not need it: if you need security logs for audits.\nWhat happens next: a reboot is required."},
+    "raid": {"ru": "Что это: RAID — способ объединить несколько дисков в один для надёжности или скорости. Если у вас несколько дисков работают как один — у вас RAID.\nЗачем включать: при каждой загрузке система тратит несколько секунд на поиск RAID. Если его нет, эти секунды можно сэкономить.\nКому не нужно: ВНИМАНИЕ — если вы используете RAID, не включайте эту опцию, иначе система перестанет видеть ваши диски.\nЧто дальше: требуется перезагрузка.",
+                "en": "What it is: RAID joins several disks into one for reliability or speed. If several disks act as one — you have RAID.\nWhy enable: at every boot the system spends seconds probing for RAID. If you have none, you can save those seconds.\nWho does not need it: WARNING — if you use RAID, do not enable this, or the system will stop seeing your disks.\nWhat happens next: a reboot is required."},
+    "nmi_watchdog": {"ru": "Что это: NMI-watchdog — служебный механизм ядра для отладки зависаний, он периодически посылает процессору специальные прерывания.\nЗачем включать: дома отладка не нужна, а прерывания дают микро-фризы в играх. Отключение убирает их.\nКому не нужно: если вы специально отлаживаете зависания ядра.\nЧто дальше: требуется перезагрузка.",
+                "en": "What it is: the NMI watchdog is a kernel debug facility that periodically sends special interrupts to the CPU.\nWhy enable: at home debugging is unneeded and the interrupts cause micro-stutters in games. Disabling removes them.\nWho does not need it: if you deliberately debug kernel hangs.\nWhat happens next: a reboot is required."},
+    "corectrl": {"ru": "Что это: CoreCtrl — программа для тонкой настройки видеокарты AMD (вентиляторы, частоты, лимиты).\nЗачем включать: по умолчанию её действия спрашивают пароль администратора. Эта опция разрешает вашей группе пользователей управлять картой без пароля.\nКому не нужно: если у вас не AMD или вы не пользуетесь CoreCtrl.\nЧто дальше: работает сразу.",
+                "en": "What it is: CoreCtrl is a tool for fine-tuning an AMD GPU (fans, clocks, limits).\nWhy enable: by default its actions ask for the admin password. This option lets your user group control the card without a password.\nWho does not need it: if you do not have AMD or do not use CoreCtrl.\nWhat happens next: works immediately."},
+    "ppfeaturemask": {"ru": "Что это: параметр драйвера amdgpu, который открывает скрытые возможности управления питанием карты.\nЗачем включать: CoreCtrl получает полный контроль над частотами и питанием, что нужно для тонкой настройки.\nКому не нужно: если у вас не AMD или вы не трогаете частоты.\nЧто дальше: требуется перезагрузка.",
+                "en": "What it is: an amdgpu driver parameter that unlocks hidden power-management features of the card.\nWhy enable: CoreCtrl gets full control over clocks and power, needed for fine tuning.\nWho does not need it: if you do not have AMD or do not touch clocks.\nWhat happens next: a reboot is required."},
+    "nvidia_modeset": {"ru": "Что это: режим корректного вывода видео для драйвера NVIDIA (kernel modesetting).\nЗачем включать: без него не работает Wayland и бывают проблемы при переключении видеорежимов и композиторе.\nКому не нужно: если у вас не NVIDIA.\nЧто дальше: требуется перезагрузка.",
+                "en": "What it is: proper video output mode for the NVIDIA driver (kernel modesetting).\nWhy enable: without it Wayland does not work and mode switching/compositor misbehave.\nWho does not need it: if you do not have NVIDIA.\nWhat happens next: a reboot is required."},
+    "vrr": {"ru": "Что это: VRR (FreeSync) — переменная частота обновления монитора, синхронная с кадрами игры.\nЗачем включать: убирает разрывы картинки при плавающем FPS в играх.\nКому не нужно: если монитор без FreeSync или вы не в X11 с драйвером amdgpu.\nЧто дальше: требуется перезайти в сеанс.",
+                "en": "What it is: VRR (FreeSync) is a variable monitor refresh rate synced to game frames.\nWhy enable: removes screen tearing at fluctuating FPS in games.\nWho does not need it: if the monitor lacks FreeSync or you are not in X11 with amdgpu.\nWhat happens next: a re-login is required."},
+    "radv": {"ru": "Что это: SAM / Resizable BAR — доступ процессора ко всей видеопамяти сразу, а не кусками.\nЗачем включать: небольшой прирост FPS в играх.\nКому не нужно: если у вас не AMD или старая материнская плата без поддержки.\nЧто дальше: требуется перезайти в сеанс.",
+                "en": "What it is: SAM / Resizable BAR gives the CPU access to all VRAM at once instead of chunks.\nWhy enable: a small FPS gain in games.\nWho does not need it: if you do not have AMD or an old board without support.\nWhat happens next: a re-login is required."},
+    "mesa": {"ru": "Что это: MESA кэширует скомпилированные шейдеры игр, чтобы не пересчитывать их каждый раз.\nЗачем включать: больший кэш (4 ГБ) значит меньше подтормаживаний в первые минуты игры.\nКому не нужно: если вы не играете в игры с шейдерами.\nЧто дальше: требуется перезайти в сеанс.",
+                "en": "What it is: MESA caches compiled game shaders so they are not recomputed each time.\nWhy enable: a bigger cache (4 GB) means fewer stutters in the first minutes of a game.\nWho does not need it: if you do not play shader-heavy games.\nWhat happens next: a re-login is required."},
+    "pipewire": {"ru": "Что это: PipeWire — звуковой сервер, который передаёт звук приложениям.\nЗачем включать: увеличенные буферы убирают треск, щелчки и прерывистый звук в наушниках и колонках.\nКому не нужно: если у вас нет проблем со звуком.\nЧто дальше: требуется перезайти в сеанс.",
+                "en": "What it is: PipeWire is the sound server handing audio to apps.\nWhy enable: larger buffers remove crackling, pops and stuttering in headphones and speakers.\nWho does not need it: if you have no sound problems.\nWhat happens next: a re-login is required."},
+    "bbr": {"ru": "Что это: BBR — современный алгоритм управления потоком интернета от Google.\nЗачем включать: выше реальная скорость и меньше задержки, особенно на нестабильных каналах (Wi-Fi, VPN, дальние серверы).\nКому не нужно: если у вас стабильный кабель и нет жалоб на задержки.\nЧто дальше: работает сразу.",
+                "en": "What it is: BBR is Google's modern internet congestion-control algorithm.\nWhy enable: higher real throughput and lower latency, especially on unstable links (Wi-Fi, VPN, remote servers).\nWho does not need it: if you have stable cable and no latency complaints.\nWhat happens next: works immediately."},
+    "swap": {"ru": "Что это: vm.swappiness — число, которое говорит системе, как охотно выгружать память в подкачку.\nЗачем включать: высокое (150) выгодно для сжатого zram, низкое (10) — для диска/SSD, чтобы не дёргать диск лишний раз.\nКому не нужно: если вас устраивает поведение по умолчанию.\nЧто дальше: работает сразу.",
+                "en": "What it is: vm.swappiness is a number telling the system how eagerly to push memory to swap.\nWhy enable: high (150) suits compressed zram, low (10) suits disk/SSD to avoid needless disk access.\nWho does not need it: if default behaviour is fine.\nWhat happens next: works immediately."},
+    "zram": {"ru": "Что это: zram — это сжатая область в оперативной памяти, которую система использует как дополнительную память. Когда оперативной памяти не хватает, данные сжимаются и остаются в памяти, а не уходят на диск.\nЗачем включать: если у вас мало оперативной памяти, система реже будет обращаться к диску. Это ускоряет работу и уменьшает износ SSD.\nКому не нужно: если у вас много оперативной памяти (16 ГБ и больше), разницы вы не почувствуете.\nЧто дальше: требуется перезагрузка. Если пакет zram-generator не установлен, опция будет неактивна — установите его командой «sudo apt install zram-generator».",
+                "en": "What it is: zram is a compressed area in RAM that the system uses as extra memory. When RAM runs low, data is compressed and stays in RAM instead of going to disk.\nWhy enable: if you have little RAM, the system accesses disk less often. This speeds up work and cuts SSD wear.\nWho does not need it: if you have plenty of RAM (16 GB+), you will not feel a difference.\nWhat happens next: a reboot is required. If zram-generator is not installed the option is disabled — install it with «sudo apt install zram-generator»."},
+    "zswap": {"ru": "Что это: zswap — сжатый кэш в оперативной памяти ПЕРЕД записью в swap.\nЗачем включать: страницы сначала сжимаются в памяти и только при переполнении уходят на диск. Меньше обращений к диску, быстрее отклик.\nКому не нужно: если у вас нет swap или вы им не пользуетесь.\nЧто дальше: требуется перезагрузка.",
+                "en": "What it is: zswap is a compressed cache in RAM BEFORE writing to swap.\nWhy enable: pages compress in RAM first and only go to disk on overflow. Fewer disk accesses, faster response.\nWho does not need it: if you have no swap or never use it.\nWhat happens next: a reboot is required."},
+    "thp": {"ru": "Что это: память компьютера делится на кусочки. Обычно это мелкие кусочки по 4 КБ. При больших объёмах система тратит время на управление ими. Режим THP (Transparent Huge Pages) позволяет выдавать память крупными кусками по 2 МБ.\nЗачем включать: игры, программы для обработки фото и видео, базы данных работают чуть быстрее, потому что системе проще управлять крупными блоками.\nКому не нужно: если компьютер работает нормально, менять ничего не обязательно. Значение madvise — самый безопасный вариант, рекомендуется.\nЧто дальше: требуется перезагрузка. Значения: madvise — выдавать крупные блоки только тем программам, которые сами попросят; always — выдавать всем подряд (может давать лёгкие подтормаживания); never — не использовать.",
+                "en": "What it is: computer memory is divided into chunks. Normally these are small 4 KB chunks. At large volumes the system spends time managing them. THP (Transparent Huge Pages) mode lets the system hand out memory in large 2 MB chunks.\nWhy enable: games, photo/video editors and databases run slightly faster because large blocks are easier to manage.\nWho does not need it: if your computer works fine, you do not have to change anything. The madvise value is the safest option and is recommended.\nWhat happens next: a reboot is required. Values: madvise — hand out large blocks only to programs that ask for them; always — to everyone (may cause slight stutters); never — do not use."},
+    "sysctl_cache": {"ru": "Что это: vfs_cache_pressure — число, которое говорит ядру, как агрессивно освобождать кэш файлов и папок.\nЗачем включать: значение 50 (вместо 100) держит кэш дольше, файлы открываются быстрее, особенно при множестве файлов.\nКому не нужно: если у вас мало файлов и нет жалоб на скорость.\nЧто дальше: работает сразу.",
+                "en": "What it is: vfs_cache_pressure is a number telling the kernel how aggressively to free file/folder cache.\nWhy enable: value 50 (instead of 100) keeps cache longer so files open faster, especially with many files.\nWho does not need it: if you have few files and no speed complaints.\nWhat happens next: works immediately."},
+    "sysctl_numa": {"ru": "Что это: kernel.numa_balancing — автоматический перенос памяти между ядрами процессора (полезно на серверах).\nЗачем включать: на домашних ПК перенос только мешает и вызывает паузы. Отключение убирает паузы в играх.\nКому не нужно: если у вас сервер с NUMA и вы знаете, зачем он.\nЧто дальше: работает сразу.",
+                "en": "What it is: kernel.numa_balancing automatically moves memory between CPU cores (useful on servers).\nWhy enable: on home PCs the moving only hurts and causes stalls. Disabling removes game stalls.\nWho does not need it: if you run a NUMA server and know why you need it.\nWhat happens next: works immediately."},
+    "reisub": {"ru": "Что это: Magic SysRq — аварийные клавиши ядра. Последовательность R E I S U B безопасно перезагружает зависший компьютер.\nЗачем включать: при полном зависании вы удерживаете Alt+PrtSc и нажимаете R E I S U B по порядку — система перезагрузится без повреждения файлов.\nКому не нужно: если вы не боитесь жёсткого сброса питания.\nЧто дальше: работает сразу.",
+                "en": "What it is: Magic SysRq is the kernel's emergency keys. The R E I S U B sequence safely reboots a frozen computer.\nWhy enable: on a full freeze you hold Alt+PrtSc and press R E I S U B in order — the system reboots without file damage.\nWho does not need it: if you are not afraid of a hard power reset.\nWhat happens next: works immediately."},
+    "ntsync": {"ru": "Что это: ntsync — модуль ядра, ускоряющий синхронизацию потоков в Wine/Proton.\nЗачем включать: игры под Windows используют много синхронизации, ntsync делает её быстрее — заметный прирост FPS.\nКому не нужно: если у вас ядро старше 6.14 без патча или вы не играете под Wine.\nЧто дальше: работает сразу, если модуль доступен.",
+                "en": "What it is: ntsync is a kernel module speeding up thread sync in Wine/Proton.\nWhy enable: Windows games use lots of sync; ntsync makes it faster — a noticeable FPS gain.\nWho does not need it: if your kernel is older than 6.14 without a patch or you do not game under Wine.\nWhat happens next: works immediately if the module is available."},
+    "ntfs3": {"ru": "Что это: ntfs3 — быстрый встроенный драйвер для дисков NTFS (Windows-диски).\nЗачем включать: Mint по умолчанию блокирует его и использует медленный ntfs-3g. Опция снимает блокировку, NTFS-диски работают заметно быстрее.\nКому не нужно: ВНИМАНИЕ — если у вас нет NTFS-дисков, опция не даст ничего.\nЧто дальше: требуется перезагрузка или перемонтирование дисков.",
+                "en": "What it is: ntfs3 is the fast built-in driver for NTFS disks (Windows disks).\nWhy enable: Mint blocks it by default and uses slow ntfs-3g. This lifts the block so NTFS disks run much faster.\nWho does not need it: WARNING — if you have no NTFS disks, it gives nothing.\nWhat happens next: a reboot or remount of the disks is required."},
+    "commit": {"ru": "Что это: commit=NN — интервал в секундах, с которым ext4 сбрасывает служебную информацию на диск.\nЗачем включать: больше значение — меньше мелких записей и меньше износа SSD.\nКому не нужно: ВНИМАНИЕ — при внезапном отключении питания возможна потеря последних записей. Не ставьте большое значение на важных дисках.\nЧто дальше: требуется перезагрузка.",
+                "en": "What it is: commit=NN is the interval in seconds at which ext4 flushes metadata to disk.\nWhy enable: higher value means fewer small writes and less SSD wear.\nWho does not need it: WARNING — on sudden power loss the last writes may be lost. Do not set a high value on important disks.\nWhat happens next: a reboot is required."},
+    "aliases": {"ru": "Что это: готовые команды терминала, которые добавляются в ваш файл .bashrc.\nЗачем включать: команды upd, upgr, update_all, clean, space, mem экономят время на рутинных операциях.\nКому не нужно: если вы не пользуетесь терминалом.\nЧто дальше: появятся в новых терминалах или после команды source ~/.bashrc.",
+                "en": "What it is: ready terminal commands added to your .bashrc file.\nWhy enable: commands upd, upgr, update_all, clean, space, mem save time on routine tasks.\nWho does not need it: if you do not use the terminal.\nWhat happens next: they appear in new terminals or after source ~/.bashrc."},
+    "autoupdate": {"ru": "Что это: systemd-таймер, который по расписанию сам обновляет систему и Flatpak.\nЗачем включать: вам не нужно помнить об обновлениях — всё сделается само.\nКому не нужно: ВНИМАНИЕ — отключите встроенное автообновление Mint (mintupdate), иначе обновления запустятся дважды и конфликтовать.\nЧто дальше: работает сразу после применения.",
+                "en": "What it is: a systemd timer that auto-updates the system and Flatpak on schedule.\nWhy enable: you do not need to remember updates — everything happens by itself.\nWho does not need it: WARNING — disable Mint's built-in auto-update (mintupdate), otherwise updates run twice and conflict.\nWhat happens next: works immediately after applying."},
+    "mount": {"ru": "Что это: опция монтирования noatime отключает обновление времени последнего доступа к файлам и папкам.\nЗачем включать: каждый файл при чтении больше не вызывает служебную запись на диск. Меньше износа SSD и быстрее чтение.\nКому не нужно: если у вас нет SSD и вы не замечаете износа.\nЧто дальше: требуется перезагрузка.",
+                "en": "What it is: the noatime mount option stops updating last-access time of files and folders.\nWhy enable: each read no longer causes a service write to disk. Less SSD wear and faster reads.\nWho does not need it: if you have no SSD and do not notice wear.\nWhat happens next: a reboot is required."},
+    "steam": {"ru": "Что это: игры Steam под Proton хранят свои данные (префиксы) в папке compatdata в домашней папке.\nЗачем включать: если библиотека Steam лежит на другом диске (NTFS), игра не находит эти данные. Симлинк compatdata в библиотеке указывает на домашнюю папку, и игры работают корректно.\nКому не нужно: если у вас все библиотеки Steam на домашнем диске.\nЧто дальше: работает сразу.",
+                "en": "What it is: Steam Proton games keep their data (prefixes) in a compatdata folder in your home.\nWhy enable: if a Steam library is on another disk (NTFS), games cannot find this data. A compatdata symlink in the library points to the home folder so games work correctly.\nWho does not need it: if all your Steam libraries are on the home disk.\nWhat happens next: works immediately."},
 }
 
 SERVICES_META = {
-    "avahi-daemon.service": {"ru": "Сетевое обнаружение устройств (принтеры, ТВ, Chromecast). На домашнем ПК без сетевой печати почти не нужно.", "en": "Network device discovery (printers, TVs, Chromecast). Rarely needed on a home PC without network printing."},
-    "avahi-daemon.socket": {"ru": "Сокет-активатор Avahi: будит службу при обращении из сети. Отключается вместе со службой.", "en": "Avahi socket activator: wakes the service on network requests. Disabled together with the service."},
-    "cups-browsed.service": {"ru": "Автоматический поиск сетевых принтеров. Если у вас нет сетевого принтера — служба простаивает зря.", "en": "Automatic network printer discovery. Useless if you have no network printer."},
-    "cups.service": {"ru": "Сервер печати CUPS. Если принтера/сканера нет — служба не нужна.", "en": "CUPS print server. If you have no printer/scanner — unneeded."},
-    "cups.socket": {"ru": "Сокет CUPS: активирует службу печати при обращении. Отключается вместе с cups.service.", "en": "CUPS socket: activates printing on demand. Disabled together with cups.service."},
-    "ModemManager.service": {"ru": "Управление USB-модемами (3G/4G). Без модема не нужен; иногда мешает serial-устройствам и Arduino.", "en": "USB modem (3G/4G) management. Useless without a modem; can interfere with serial devices and Arduino."},
-    "openvpn.service": {"ru": "Встроенный VPN-сервер. Если не поднимаете собственный VPN — не нужен.", "en": "Built-in VPN server. Useless unless you run your own VPN."},
-    "lvm2-monitor.service": {"ru": "Мониторинг LVM-томов. При обычной установке без LVM не нужен.", "en": "LVM volume monitoring. Useless on a plain install without LVM."},
-    "switcheroo-control.service": {"ru": "Переключение встроенной и дискретной графики на ноутбуках. На настольном ПК не нужен.", "en": "Switching integrated/discrete graphics on laptops. Useless on a desktop."},
-    "touchegg.service": {"ru": "Распознавание мультитач-жестов тачпада. На настольном ПК без тачскрина не нужен.", "en": "Multitouch gesture recognition. Useless on a desktop without a touchscreen."},
-    "zfs-zed.service": {"ru": "Мониторинг ZFS-пулов (дисковые массивы ZFS). Без ZFS не нужен.", "en": "ZFS pool monitoring. Useless without ZFS."},
-    "kerneloops.service": {"ru": "Отправка разработчикам отчётов о сбоях ядра. На домашнем ПК не нужна.", "en": "Sends kernel crash reports to developers. Unneeded on a home PC."},
+    "avahi-daemon.service": {"ru": "Поиск устройств в домашней сети: принтеров, телевизоров, Chromecast. Не нужен, если у вас нет сетевого принтера.", "en": "Finds devices on your home network: printers, TVs, Chromecast. Not needed without a network printer."},
+    "avahi-daemon.socket": {"ru": "Будит службу поиска устройств при обращении из сети. Отключается вместе со службой avahi.", "en": "Wakes the device-discovery service on network request. Disable together with avahi service."},
+    "cups-browsed.service": {"ru": "Ищет сетевые принтеры автоматически. Не нужен, если принтера нет или он подключён по USB.", "en": "Auto-discovers network printers. Not needed without a printer or with a USB printer."},
+    "cups.service": {"ru": "Печать и сканирование. Не нужно, если у вас нет принтера или сканера.", "en": "Printing and scanning. Not needed without a printer or scanner."},
+    "cups.socket": {"ru": "Будит службу печати при обращении. Отключается вместе со службой cups.", "en": "Wakes the print service on request. Disable together with cups service."},
+    "ModemManager.service": {"ru": "Работа с мобильными модемами через USB или сим-карту. Не нужна, если интернет по Wi-Fi или кабелю.", "en": "Handles mobile modems via USB or SIM. Not needed if internet is Wi-Fi or cable."},
+    "openvpn.service": {"ru": "Встроенный VPN-сервер. Не нужен, если вы не поднимаете собственный VPN.", "en": "Built-in VPN server. Not needed unless you run your own VPN."},
+    "lvm2-monitor.service": {"ru": "Следит за объединением дисков в один большой (LVM). Не нужен при обычной установке Mint/Ubuntu.", "en": "Watches disks joined into one big volume (LVM). Not needed on a standard Mint/Ubuntu install."},
+    "switcheroo-control.service": {"ru": "Переключает встроенную и отдельную графику на ноутбуках. Не нужен на настольном ПК.", "en": "Switches integrated and discrete graphics on laptops. Not needed on a desktop."},
+    "touchegg.service": {"ru": "Распознаёт жесты тачпада и сенсора. Не нужен на настольном ПК без сенсора.", "en": "Recognizes touchpad and touchscreen gestures. Not needed on a desktop without a touchscreen."},
+    "zfs-zed.service": {"ru": "Следит за дисковыми массивами ZFS и предупреждает о проблемах. Не нужен без ZFS.", "en": "Watches ZFS disk arrays and warns on problems. Not needed without ZFS."},
+    "kerneloops.service": {"ru": "Отправляет разработчикам отчёты о сбоях ядра. На домашнем ПК это лишняя нагрузка и трафик.", "en": "Sends kernel crash reports to developers. On a home PC this is extra load and traffic."},
 }
 SERVICES_ORDER = list(SERVICES_META.keys())
 
 SERVICES_HELP = {
-    "avahi-daemon.service": {"ru": "Avahi (mDNS/DNS-SD) позволяет устройствам в локальной сети находить друг друга без настройки: принтеры, колонки, ТВ. Если у вас нет сетевых принтеров и вы не пользуетесь Chromecast/AirPlay, служба не нужна и только периодически рассылает пакеты по сети. Отключение безопасно.", "en": "Avahi (mDNS/DNS-SD) lets local devices discover each other without setup: printers, speakers, TVs. If you have no network printers and don't use Chromecast/AirPlay, the service is unneeded and only periodically broadcasts on the network. Safe to disable."},
-    "avahi-daemon.socket": {"ru": "Сокет активирует avahi-daemon при первом обращении из сети. Отключайте вместе со службой, чтобы avahi не «проснулась» сама.", "en": "The socket activates avahi-daemon on first network request. Disable together with the service so avahi cannot wake up on its own."},
-    "cups-browsed.service": {"ru": "Часть системы печати CUPS: ищет сетевые принтеры и добавляет их автоматически. Если принтера нет или он подключён по USB, служба не нужна.", "en": "Part of the CUPS printing system: discovers network printers and adds them automatically. If you have no printer or it is USB-connected, the service is unneeded."},
-    "cups.service": {"ru": "CUPS обслуживает печать и сканирование. Если печатающих устройств нет, служба только висит фоном. Отключение безопасно; при необходимости печать можно включить обратно.", "en": "CUPS handles printing/scanning. With no printing devices the service just idles. Safe to disable; printing can be re-enabled later."},
-    "cups.socket": {"ru": "Сокет активирует cups.service при первом обращении к печати. Отключайте вместе с cups.service, чтобы печать не «проснулась» сама.", "en": "The socket activates cups.service on first print access. Disable together with cups.service so printing cannot wake up on its own."},
-    "ModemManager.service": {"ru": "Управляет мобильными модемами (3G/4G). На ПК без модема служба не нужна; более того, она может мешать устройствам, которые определяются как serial-порты (Arduino, некоторые преобразователи).", "en": "Manages mobile modems (3G/4G). On a PC without a modem the service is unneeded; moreover it can interfere with devices that appear as serial ports (Arduino, some converters)."},
-    "openvpn.service": {"ru": "Сервер OpenVPN для входящих VPN-подключений. Если вы не настроили собственный VPN-сервер, служба не активна и не нужна.", "en": "OpenVPN server for incoming VPN connections. If you have not set up your own VPN server, the service is inactive and unneeded."},
-    "lvm2-monitor.service": {"ru": "Следит за томами LVM (логические диски). При обычной установке Mint/Ubuntu без LVM служба не нужна.", "en": "Monitors LVM volumes (logical disks). On a standard Mint/Ubuntu install without LVM the service is unneeded."},
-    "switcheroo-control.service": {"ru": "Переключает встроенную и дискретную графику на гибридных ноутбуках. На настольном ПК с одной видеокартой не нужна.", "en": "Switches integrated and discrete graphics on hybrid laptops. On a desktop with a single GPU it is unneeded."},
-    "touchegg.service": {"ru": "Распознаёт мультитач-жесты на тачпадах и тачскринах. На настольном ПК без сенсорного ввода не нужна.", "en": "Recognizes multitouch gestures on touchpads and touchscreens. On a desktop without touch input it is unneeded."},
-    "zfs-zed.service": {"ru": "Демон ZFS (ZED) следит за состоянием ZFS-пулов и шлёт уведомления о проблемах дисков. Без ZFS не нужна.", "en": "The ZFS daemon (ZED) monitors ZFS pool health and sends notifications on disk issues. Without ZFS it is unneeded."},
-    "kerneloops.service": {"ru": "Собирает и отправляет разработчикам отчёты о сбоях ядра. На домашнем ПК это лишь фоновая нагрузка и исходящий трафик.", "en": "Collects and sends kernel crash reports to developers. On a home PC this is only background load and outgoing traffic."},
+    "avahi-daemon.service": {"ru": "Что это: служба, которая ищет устройства в домашней сети (принтеры, ТВ, колонки) без настройки.\nЗачем включать: нужна только если у вас есть сетевой принтер или вы пользуетесь Chromecast/AirPlay.\nКому не нужно: если у вас нет сетевых принтеров и вы не пользуетесь Chromecast/AirPlay.\nЧто дальше: отключение безопасно.",
+                "en": "What it is: a service that finds devices on your home network (printers, TVs, speakers) without setup.\nWhy enable: only needed if you have a network printer or use Chromecast/AirPlay.\nWho does not need it: if you have no network printers and do not use Chromecast/AirPlay.\nWhat happens next: safe to disable."},
+    "avahi-daemon.socket": {"ru": "Что это: сокет, который будит службу avahi при первом обращении из сети.\nЗачем включать: нужен только вместе со службой avahi.\nКому не нужно: если вы отключили avahi.\nЧто дальше: отключайте вместе со службой, чтобы avahi не «проснулась» сама.",
+                "en": "What it is: a socket that wakes the avahi service on first network request.\nWhy enable: only needed together with the avahi service.\nWho does not need it: if you disabled avahi.\nWhat happens next: disable together with the service so avahi cannot wake up on its own."},
+    "cups-browsed.service": {"ru": "Что это: часть системы печати CUPS, которая ищет сетевые принтеры и добавляет их автоматически.\nЗачем включать: нужна только если у вас есть сетевой принтер.\nКому не нужно: если принтера нет или он подключён по USB.\nЧто дальше: отключение безопасно.",
+                "en": "What it is: part of the CUPS printing system that auto-discovers network printers.\nWhy enable: only needed if you have a network printer.\nWho does not need it: if you have no printer or it is USB-connected.\nWhat happens next: safe to disable."},
+    "cups.service": {"ru": "Что это: служба печати и сканирования CUPS.\nЗачем включать: нужна только если у вас есть принтер или сканер.\nКому не нужно: если печатающих устройств нет.\nЧто дальше: отключение безопасно; при необходимости печать можно включить обратно.",
+                "en": "What it is: the CUPS printing and scanning service.\nWhy enable: only needed if you have a printer or scanner.\nWho does not need it: if you have no printing devices.\nWhat happens next: safe to disable; printing can be re-enabled later."},
+    "cups.socket": {"ru": "Что это: сокет, который будит службу печати при обращении.\nЗачем включать: нужен только вместе со службой cups.\nКому не нужно: если вы отключили cups.\nЧто дальше: отключайте вместе со службой cups.",
+                "en": "What it is: a socket that wakes the print service on request.\nWhy enable: only needed together with the cups service.\nWho does not need it: if you disabled cups.\nWhat happens next: disable together with the cups service."},
+    "ModemManager.service": {"ru": "Что это: служба для работы с мобильными модемами — теми, что подключаются к компьютеру через USB или встроены в ноутбук и работают через сим-карту.\nЗачем включать: нужна только если вы выходите в интернет через сим-карту прямо с компьютера.\nКому не нужно: если у вас интернет по Wi-Fi или кабелю — служба не нужна.\nЧто дальше: отключение безопасно. Часто после этого перестают конфликтовать устройства вроде Arduino и переходников USB-Serial.",
+                "en": "What it is: a service for mobile modems — those plugged via USB or built into a laptop and working via SIM.\nWhy enable: only needed if you get internet via SIM directly on the computer.\nWho does not need it: if your internet is Wi-Fi or cable — the service is unneeded.\nWhat happens next: safe to disable. Often Arduino and USB-Serial adapters stop conflicting afterwards."},
+    "openvpn.service": {"ru": "Что это: встроенный сервер OpenVPN для входящих VPN-подключений.\nЗачем включать: нужен только если вы подняли собственный VPN-сервер.\nКому не нужно: если вы не настраивали собственный VPN.\nЧто дальше: отключение безопасно.",
+                "en": "What it is: a built-in OpenVPN server for incoming VPN connections.\nWhy enable: only needed if you run your own VPN server.\nWho does not need it: if you did not set up your own VPN.\nWhat happens next: safe to disable."},
+    "lvm2-monitor.service": {"ru": "Что это: LVM — способ объединить несколько дисков или разделов в один большой «виртуальный» диск. Служба следит за таким объединением.\nЗачем включать: нужна только если вы настраивали LVM.\nКому не нужно: при обычной установке Linux Mint или Ubuntu LVM не используется — служба не нужна.\nЧто дальше: отключение безопасно.",
+                "en": "What it is: LVM joins several disks or partitions into one big “virtual” disk. The service watches that union.\nWhy enable: only needed if you configured LVM.\nWho does not need it: on a standard Linux Mint or Ubuntu install LVM is not used — the service is unneeded.\nWhat happens next: safe to disable."},
+    "switcheroo-control.service": {"ru": "Что это: служба, которая переключает встроенную и отдельную графику на гибридных ноутбуках.\nЗачем включать: нужна только на ноутбуках с двумя видеокартами.\nКому не нужно: на настольном ПК с одной видеокартой.\nЧто дальше: отключение безопасно.",
+                "en": "What it is: a service that switches integrated and discrete graphics on hybrid laptops.\nWhy enable: only needed on laptops with two GPUs.\nWho does not need it: on a desktop with a single GPU.\nWhat happens next: safe to disable."},
+    "touchegg.service": {"ru": "Что это: служба, которая распознаёт жесты тачпада и сенсорного экрана.\nЗачем включать: нужна только если у вас тачскрин или вы пользуетесь жестами тачпада.\nКому не нужно: на настольном ПК без сенсора.\nЧто дальше: отключение безопасно.",
+                "en": "What it is: a service that recognizes touchpad and touchscreen gestures.\nWhy enable: only needed if you have a touchscreen or use touchpad gestures.\nWho does not need it: on a desktop without a touchscreen.\nWhat happens next: safe to disable."},
+    "zfs-zed.service": {"ru": "Что это: демон ZFS (ZED), который следит за состоянием дисковых массивов ZFS и предупреждает о проблемах.\nЗачем включать: нужен только если вы используете ZFS.\nКому не нужно: без ZFS.\nЧто дальше: отключение безопасно.",
+                "en": "What it is: the ZFS daemon (ZED) that watches ZFS disk arrays and warns on problems.\nWhy enable: only needed if you use ZFS.\nWho does not need it: without ZFS.\nWhat happens next: safe to disable."},
+    "kerneloops.service": {"ru": "Что это: служба, которая собирает и отправляет разработчикам отчёты о сбоях ядра.\nЗачем включать: нужна только если вы хотите помогать разработчикам отчётами.\nКому не нужно: на домашнем ПК это лишь фоновая нагрузка и исходящий трафик.\nЧто дальше: отключение безопасно.",
+                "en": "What it is: a service that collects and sends kernel crash reports to developers.\nWhy enable: only needed if you want to help developers with reports.\nWho does not need it: on a home PC this is only background load and outgoing traffic.\nWhat happens next: safe to disable."},
 }
 
 OPTION_FILES = {
@@ -228,7 +268,7 @@ STR = {
         "tab_tune": "Тюнинг", "tab_serv": "Службы", "tab_stat": "Статус",
         "btn_apply": "Применить выбранное", "btn_rollback": "Откатить выбранное",
         "btn_selall": "Выбрать все", "btn_selnone": "Снять выделение",
-        "btn_about": "О твикере",
+        "btn_about": "О твикере", "btn_close": "Закрыть",
         "theme_dark": "Тёмная тема", "theme_light": "Светлая тема",
         "lbl_dry": "Сухой прогон", "lbl_terminal": "Терминальный вывод:",
         "lbl_debug": "Отладка",
@@ -271,11 +311,9 @@ STR = {
         "kern_sw": "насколько охотно система выгружает память в swap (меньше значение — реже)",
         "kern_vfs": "кэш файлов в памяти",
         "kern_numa": "миграция памяти между ядрами",
-        "kern_thp": "огромные страницы памяти (режим THP)",
-        "thp_cur": "сейчас: %s",
-        "st_enabled": "включён", "st_disabled": "отключён",
-        "st_masked": "заблокирован", "st_notfound": "не найден",
-        "kern_thp": "огромные страницы памяти (режим THP)",
+        "kern_thp": "крупные блоки памяти",
+        "thp_val_always": "всем подряд", "thp_val_madvise": "по запросу",
+        "thp_val_never": "выключено",
         "tw_name": "Твик", "kn_param": "Параметр", "kn_val": "Значение",
         "sudo_title": "sudo", "sudo_prompt": "Пароль sudo (попытка %d из 3):",
         "sudo_wrong": "Неверный пароль или нет прав sudo.",
@@ -284,6 +322,7 @@ STR = {
         "about_title": "О твикере",
         "about_purpose": "Графическая оболочка тюнинга для Linux Mint / Ubuntu / Debian и других systemd-дистрибутивов: твики производительности, логов, дисков, сети и игр с откатом и бэкапами.",
         "about_author": "Автор", "about_author_name": "Дмитрий Свистунов",
+        "about_ver": "Версия",
         "msg_run": "Скрипт уже запущен. Дождитесь завершения.",
         "msg_noopt": "Отметьте хотя бы одну опцию.",
         "msg_sel": "Сначала выберите строки в таблице.",
@@ -294,7 +333,7 @@ STR = {
         "tab_tune": "Tuning", "tab_serv": "Services", "tab_stat": "Status",
         "btn_apply": "Apply selected", "btn_rollback": "Rollback selected",
         "btn_selall": "Select all", "btn_selnone": "Deselect",
-        "btn_about": "About",
+        "btn_about": "About", "btn_close": "Close",
         "theme_dark": "Dark theme", "theme_light": "Light theme",
         "lbl_dry": "Dry run", "lbl_terminal": "Terminal output:",
         "lbl_debug": "Debug",
@@ -337,11 +376,9 @@ STR = {
         "kern_sw": "how eagerly the system moves memory to swap (lower = less often)",
         "kern_vfs": "file cache in RAM",
         "kern_numa": "memory migration between cores",
-        "kern_thp": "huge memory pages (THP mode)",
-        "thp_cur": "now: %s",
-        "st_enabled": "enabled", "st_disabled": "disabled",
-        "st_masked": "blocked", "st_notfound": "not found",
-        "kern_thp": "huge memory pages (THP mode)",
+        "kern_thp": "large memory blocks",
+        "thp_val_always": "always on", "thp_val_madvise": "on request",
+        "thp_val_never": "off",
         "tw_name": "Tweak", "kn_param": "Parameter", "kn_val": "Value",
         "sudo_title": "sudo", "sudo_prompt": "sudo password (attempt %d of 3):",
         "sudo_wrong": "Wrong password or no sudo rights.",
@@ -350,6 +387,7 @@ STR = {
         "about_title": "About",
         "about_purpose": "A graphical tuning shell for Linux Mint / Ubuntu / Debian and other systemd distributions: performance, logs, disk, network and gaming tweaks with rollback and backups.",
         "about_author": "Author", "about_author_name": "Dmitry Svistunov",
+        "about_ver": "Version",
         "msg_run": "A job is already running. Wait for it to finish.",
         "msg_noopt": "Tick at least one option.",
         "msg_sel": "Select table rows first.",
@@ -436,12 +474,10 @@ def parse_mounts():
 
 def find_steam_libraries(user_home):
     libs = []
-    vdf_candidates = [
-        os.path.join(user_home, ".steam", "steam", "steamapps", "libraryfolders.vdf"),
-        os.path.join(user_home, ".local", "share", "Steam", "steamapps",
-                     "libraryfolders.vdf"),
-    ]
-    for vdf in vdf_candidates:
+    for vdf in (os.path.join(user_home, ".steam", "steam", "steamapps",
+                             "libraryfolders.vdf"),
+                os.path.join(user_home, ".local", "share", "Steam", "steamapps",
+                             "libraryfolders.vdf")):
         if not os.path.isfile(vdf):
             continue
         try:
@@ -2029,24 +2065,6 @@ class Toast(QFrame):
             self.hide()
 
 
-class DraggableDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._drag_pos = None
-
-    def mousePressEvent(self, e):
-        if e.button() == Qt.MouseButton.LeftButton:
-            self._drag_pos = e.globalPosition().toPoint() - self.frameGeometry().topLeft()
-
-    def mouseMoveEvent(self, e):
-        if self._drag_pos is not None and e.buttons() == Qt.MouseButton.LeftButton:
-            self.move(e.globalPosition().toPoint() - self._drag_pos)
-            e.accept()
-
-    def mouseReleaseEvent(self, e):
-        self._drag_pos = None
-
-
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -2132,9 +2150,24 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(600, lambda: self._spawn_task(self._applied_work))
         QTimer.singleShot(900, lambda: self._spawn_task(self._status_work))
 
-    def _clear_info(self, dlg):
-        if self._info_dlg is dlg:
-            self._info_dlg = None
+    def t(self, k):
+        if k not in STR[self.lang]:
+            msg = "MISSING i18n key: %s" % k
+            print(msg, file=sys.stderr)
+            self._debug_write(msg)
+            return k
+        return STR[self.lang][k]
+
+    def om(self, k):
+        return OPTIONS_META[k][self.lang]
+
+    def colors(self):
+        return THEMES[self.theme]
+
+    def _host_env(self):
+        return {k: v for k, v in os.environ.items()
+                if k not in ("LD_LIBRARY_PATH", "LD_PRELOAD", "PYTHONPATH",
+                             "PYTHONHOME", "APPDIR", "APPIMAGE")}
 
     def _debug_write(self, msg, tb_obj=None):
         with self._debug_lock:
@@ -2159,6 +2192,7 @@ class MainWindow(QMainWindow):
                                          % (APP_VERSION,
                                             time.strftime("%Y-%m-%d %H:%M:%S")))
                     self._debug_fh.flush()
+                faulthandler.enable(file=self._debug_fh, all_threads=True)
                 self.log("Debug log: %s" % self.debug_log_path, "info")
             except Exception as e:
                 self.debug_enabled = False
@@ -2166,6 +2200,7 @@ class MainWindow(QMainWindow):
                     self._debug_fh = None
                 self.log("Cannot open debug log: %s" % e, "error")
         else:
+            faulthandler.disable()
             with self._debug_lock:
                 if self._debug_fh:
                     try:
@@ -2174,20 +2209,6 @@ class MainWindow(QMainWindow):
                         self._debug_fh.close()
                     finally:
                         self._debug_fh = None
-
-    def t(self, k):
-        return STR[self.lang].get(k, k)
-
-    def om(self, k):
-        return OPTIONS_META[k][self.lang]
-
-    def colors(self):
-        return THEMES[self.theme]
-
-    def _host_env(self):
-        return {k: v for k, v in os.environ.items()
-                if k not in ("LD_LIBRARY_PATH", "LD_PRELOAD", "PYTHONPATH",
-                             "PYTHONHOME", "APPDIR", "APPIMAGE")}
 
     def _ask_password(self, attempt):
         text, ok = QInputDialog.getText(self, self.t("sudo_title"),
@@ -2714,27 +2735,6 @@ class MainWindow(QMainWindow):
         if cur.hasSelection():
             QApplication.clipboard().setText(cur.selectedText())
 
-    def _make_browser(self):
-        te = QTextBrowser()
-        te.setReadOnly(True)
-        te.setOpenExternalLinks(False)
-        te.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        te.customContextMenuRequested.connect(lambda p, w=te: self._menu_for(w, p))
-        te.anchorClicked.connect(self._open_url)
-        return te
-
-    def _open_url(self, url):
-        u = url.toString()
-        for cmd in (["xdg-open", u], ["gio", "open", u]):
-            try:
-                subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
-                                 stderr=subprocess.DEVNULL,
-                                 start_new_session=True, env=self._host_env())
-                return
-            except Exception:
-                continue
-        self.log("Cannot open URL: %s" % u, "error")
-
     def _show_option_help(self, key):
         txt = OPTIONS_HELP.get(key, {}).get(self.lang, "")
         if not txt:
@@ -2764,6 +2764,12 @@ class MainWindow(QMainWindow):
         te.customContextMenuRequested.connect(lambda p, w=te: self._menu_for(w, p))
         te.setHtml(html)
         vl.addWidget(te)
+        bb = QHBoxLayout()
+        bb.addStretch(1)
+        cb = QPushButton(self.t("btn_close"))
+        cb.clicked.connect(dlg.close)
+        bb.addWidget(cb)
+        vl.addLayout(bb)
         dlg.exec()
 
     def show_about(self):
@@ -2788,26 +2794,12 @@ class MainWindow(QMainWindow):
                    GITHUB_URL, GITHUB_URL))
         te.setHtml(html)
         vl.addWidget(te)
-        dlg.exec()
-
-    def show_about(self):
-        dlg = QDialog(self)
-        dlg.setWindowTitle(self.t("about_title"))
-        dlg.resize(min(640, self.screen_w - 60), min(460, self.screen_h - 80))
-        vl = QVBoxLayout(dlg)
-        vl.setContentsMargins(12, 12, 12, 12)
-        te = self._make_browser()
-        html = ('<div style="font-family: monospace;">'
-                '<h2>%s v%s</h2>'
-                '<p>%s</p>'
-                '<p><b>%s:</b> %s</p>'
-                '<p><a href="%s">%s</a></p></div>'
-                % (APP_NAME, APP_VERSION,
-                   self.t("about_purpose"),
-                   self.t("about_author"), self.t("about_author_name"),
-                   GITHUB_URL, GITHUB_URL))
-        te.setHtml(html)
-        vl.addWidget(te)
+        bb = QHBoxLayout()
+        bb.addStretch(1)
+        cb = QPushButton(self.t("btn_close"))
+        cb.clicked.connect(dlg.close)
+        bb.addWidget(cb)
+        vl.addLayout(bb)
         dlg.exec()
 
     def _open_path(self, path):
@@ -2817,7 +2809,7 @@ class MainWindow(QMainWindow):
         self._show_viewer(path, content)
 
     def _show_viewer(self, path, content):
-        dlg = DraggableDialog(self)
+        dlg = QDialog(self)
         dlg.setWindowTitle("%s: %s" % (self.t("viewer"), path))
         dlg.resize(min(760, self.screen_w - 40), min(520, self.screen_h - 60))
         vl = QVBoxLayout(dlg)
@@ -2830,6 +2822,12 @@ class MainWindow(QMainWindow):
         b = QPushButton(self.t("viewer_ext"))
         b.clicked.connect(lambda: self._open_ext(path))
         vl.addWidget(b, 0, Qt.AlignmentFlag.AlignLeft)
+        bb = QHBoxLayout()
+        bb.addStretch(1)
+        cb = QPushButton(self.t("btn_close"))
+        cb.clicked.connect(dlg.close)
+        bb.addWidget(cb)
+        vl.addLayout(bb)
         dlg.exec()
 
     def _open_ext(self, path):
@@ -3381,7 +3379,7 @@ class MainWindow(QMainWindow):
                   (self.t("home_lbl"), self.state.user_home)]
             hw_rows = ["<tr><td style='color:%s;'><b>%s</b></td><td style='color:%s;'>%s</td></tr>" % (
                 col("gray"), esc(k), col("fg"), esc(v)) for k, v in hw]
-            P.append(table(self.t("st_hw"), [self.t("kn_param"), self.t("kn_val")], hw_rows))
+            P.append(table(self.t("st_hw"), [self.t("st_hw"), ""], hw_rows))
             seen = {}
             for it in parse_mounts():
                 if it["mp"] == "/boot/efi" or (it["fstype"] == "vfat"
@@ -3456,10 +3454,12 @@ class MainWindow(QMainWindow):
                 kn_rows.append("<tr><td style='color:%s;'><b>%s</b></td><td style='color:%s;'><b>%s</b></td><td style='color:%s;'>%s</td><td style='color:%s;'><b>%s</b></td></tr>" % (
                     col("fg"), esc(p), col("fg"), esc(vals[p]), col("gray"), esc(dsc),
                     cc, self.t("yes") if ok else self.t("no")))
-            thp_cur = self._thp_current() or "n/a"
+            raw = self._thp_current() or "n/a"
+            thp_val = self.t("thp_val_" + raw) if raw in ("always", "madvise", "never") else raw
+            display = "%s (%s)" % (raw, thp_val) if thp_val != raw else raw
             thp_ok = A.get("thp", False)
             kn_rows.append("<tr><td style='color:%s;'><b>%s</b></td><td style='color:%s;'><b>%s</b></td><td style='color:%s;'>%s</td><td style='color:%s;'><b>%s</b></td></tr>" % (
-                col("fg"), esc("transparent_hugepage"), col("fg"), esc(thp_cur),
+                col("fg"), esc("transparent_hugepage"), col("fg"), esc(display),
                 col("gray"), esc(self.t("kern_thp")),
                 col("green") if thp_ok else col("red"),
                 self.t("yes") if thp_ok else self.t("no")))
@@ -3693,7 +3693,7 @@ QComboBox::drop-down { border: none; width: 22px; }
 QTableWidget { background: {panel}; color: {fg}; gridline-color: {border}; border: 1px solid {border}; border-radius: 10px; }
 QTableWidget::item:selected { background: {sel}; }
 QHeaderView::section { background: {tab}; color: {fg}; padding: 7px; border: none; border-right: 1px solid {border}; }
-QTextEdit, QTextBrowser { background: {terminal}; color: {terminal_fg}; border: 1px solid {border}; border-radius: 10px; }
+QTextEdit { background: {terminal}; color: {terminal_fg}; border: 1px solid {border}; border-radius: 10px; }
 QScrollBar:vertical { background: {panel}; width: 10px; border-radius: 5px; }
 QScrollBar::handle:vertical { background: {scroll}; border-radius: 5px; min-height: 24px; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
@@ -3708,7 +3708,6 @@ QMenu { background: {panel}; color: {fg}; border: 1px solid {border}; border-rad
 QMenu::item { padding: 6px 18px; border-radius: 6px; }
 QMenu::item:selected { background: {row_hover}; }
 QToolTip { background: {panel}; color: {fg}; border: 1px solid {border}; }
-QDialog#infodlg { background: {panel}; border: 2px solid {accent}; border-radius: 12px; }
 """
 
 
