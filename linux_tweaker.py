@@ -2751,13 +2751,41 @@ class MainWindow(QMainWindow):
             return
         self._open_info_dialog(name, "<p style='font-size:14px;'>%s</p>" % txt)
 
-        def _open_info_dialog(self, title, html):
+    def _open_info_dialog(self, title, html):
         dlg = QDialog(self)
         dlg.setWindowTitle(title)
         dlg.resize(min(720, self.screen_w - 60), min(560, self.screen_h - 80))
         vl = QVBoxLayout(dlg)
         vl.setContentsMargins(10, 10, 10, 10)
-        te = self._make_browser()
+        te = QTextEdit()
+        te.setReadOnly(True)
+        te.setOpenExternalLinks(True)
+        te.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        te.customContextMenuRequested.connect(lambda p, w=te: self._menu_for(w, p))
+        te.setHtml(html)
+        vl.addWidget(te)
+        dlg.exec()
+
+    def show_about(self):
+        dlg = QDialog(self)
+        dlg.setWindowTitle(self.t("about_title"))
+        dlg.resize(min(640, self.screen_w - 60), min(460, self.screen_h - 80))
+        vl = QVBoxLayout(dlg)
+        vl.setContentsMargins(12, 12, 12, 12)
+        te = QTextEdit()
+        te.setReadOnly(True)
+        te.setOpenExternalLinks(True)
+        te.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        te.customContextMenuRequested.connect(lambda p, w=te: self._menu_for(w, p))
+        html = ('<div style="font-family: monospace;">'
+                '<h2>%s v%s</h2>'
+                '<p>%s</p>'
+                '<p><b>%s:</b> %s</p>'
+                '<p><a href="%s">%s</a></p></div>'
+                % (APP_NAME, APP_VERSION,
+                   self.t("about_purpose"),
+                   self.t("about_author"), self.t("about_author_name"),
+                   GITHUB_URL, GITHUB_URL))
         te.setHtml(html)
         vl.addWidget(te)
         dlg.exec()
