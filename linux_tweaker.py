@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Linux Tweaker v0.04
+Linux Tweaker v0.07
 Графическая оболочка тюнинга Linux Mint / Ubuntu / Debian на PyQt6.
 RU/EN, светлая/тёмная тема, детект применённых настроек,
-откат, бэкапы, mount-опции noatime/nodiratime, симлинки compatdata Steam.
+откат, бэкапы, mount-опции, симлинки compatdata для Steam.
 """
 import sys, os, re, subprocess, time, shutil, glob, pwd, grp, threading, traceback
 from PyQt6.QtCore import (Qt, QObject, QThread, pyqtSignal, QTimer,
@@ -20,7 +20,8 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget,
                              QGraphicsOpacityEffect)
 
 APP_NAME = "Linux Tweaker"
-APP_VERSION = "0.04"
+APP_VERSION = "0.07"
+GITHUB_URL = "https://github.com/Prikolist2021/Linux-Tweaker"
 
 THEMES = {
     "light": {"bg": "#f5f5f5", "panel": "#ffffff", "fg": "#1e1e1e", "gray": "#616161",
@@ -56,12 +57,18 @@ OPTIONS_META = {
     "raid": {
         "ru": ("raid=noautodetect (GRUB)", "Если у вас нет RAID-массива, при каждой загрузке система тратит время на его поиск. Параметр отключает этот поиск — загрузка быстрее.", "Ядро и загрузка", "поиск RAID при загрузке"),
         "en": ("raid=noautodetect (GRUB)", "If you have no RAID array, the system wastes boot time probing for one. This option skips the probe — faster boot.", "Kernel & boot", "RAID probing at boot")},
+    "nmi_watchdog": {
+        "ru": ("nmi_watchdog=0 (GRUB)", "Отключает NMI-watchdog ядра — периодические немаскируемые прерывания для отладки. Дома не нужны и дают микро-фризы в играх.", "Ядро и загрузка", "nmi_watchdog=0"),
+        "en": ("nmi_watchdog=0 (GRUB)", "Disables the kernel NMI watchdog — periodic non-maskable debugging interrupts. Unneeded at home and can cause micro-stutters in games.", "Kernel & boot", "nmi_watchdog=0")},
     "corectrl": {
         "ru": ("CoreCtrl (Polkit)", "Правило Polkit для программы CoreCtrl: позволяет управлять частотами и вентиляторами видеокарты AMD без ввода пароля. В поле указывается группа пользователей, которым это разрешено (по умолчанию — ваша).", "Видеокарта и графика", "polkit-правило для CoreCtrl"),
         "en": ("CoreCtrl (Polkit)", "Polkit rule for CoreCtrl: allows controlling AMD GPU clocks and fans without a password. The field sets the user group allowed to do so (defaults to yours).", "GPU & graphics", "Polkit rule for CoreCtrl")},
     "ppfeaturemask": {
         "ru": ("amdgpu.ppfeaturemask", "Разблокирует скрытые возможности управления питанием AMD GPU (нужно на старых ядрах). Открывает CoreCtrl полный контроль над частотами.", "Видеокарта и графика", "разблокировка управления питанием AMD"),
         "en": ("amdgpu.ppfeaturemask", "Unlocks hidden AMD GPU power-management features (needed on older kernels). Gives CoreCtrl full clock control.", "GPU & graphics", "AMD power management unlock")},
+    "nvidia_modeset": {
+        "ru": ("nvidia-drm.modeset=1 (GRUB)", "Включает KMS для драйвера NVIDIA: нужно для Wayland, плавного переключения режимов и корректного композитинга.", "Видеокарта и графика", "nvidia-drm.modeset=1"),
+        "en": ("nvidia-drm.modeset=1 (GRUB)", "Enables KMS for the NVIDIA driver: needed for Wayland, smooth mode switching and correct compositing.", "GPU & graphics", "nvidia-drm.modeset=1")},
     "vrr": {
         "ru": ("VRR/FreeSync", "Включает переменную частоту обновления (FreeSync) для AMD: картинка в играх без разрывов при плавающем FPS. Работает в X11 с драйвером amdgpu.", "Видеокарта и графика", "VRR/FreeSync (X11, amdgpu)"),
         "en": ("VRR/FreeSync", "Enables variable refresh rate (FreeSync) on AMD: tear-free gaming at fluctuating FPS. Works in X11 with the amdgpu driver.", "GPU & graphics", "VRR/FreeSync (X11, amdgpu)")},
@@ -74,21 +81,39 @@ OPTIONS_META = {
     "pipewire": {
         "ru": ("PipeWire (звук)", "Увеличивает буферы (кванты) звукового сервера PipeWire. Убирает треск, щелчки и прерывистый звук в наушниках и колонках.", "Звук", "увеличенные буферы PipeWire"),
         "en": ("PipeWire (sound)", "Increases PipeWire sound-server quanta. Removes crackling, pops and stuttering audio in headphones and speakers.", "Sound", "increased PipeWire quanta")},
+    "bbr": {
+        "ru": ("TCP BBR", "Включает алгоритм управления перегрузками BBR + fq: выше реальная скорость и ниже задержки на нестабильных каналах.", "Сеть", "TCP BBR + fq"),
+        "en": ("TCP BBR", "Enables BBR congestion control + fq: higher real throughput and lower latency on unstable links.", "Network", "TCP BBR + fq")},
     "swap": {
         "ru": ("Тюнинг swap", "Настраивает vm.swappiness — насколько охотно система сбрасывает память в swap. Для сжатого zram выгодно 150, для диска/SSD — 10: меньше лишних обращений к диску.", "Память и swap", "настройка vm.swappiness"),
         "en": ("Swap tuning", "Sets vm.swappiness — how eagerly memory is pushed to swap. 150 suits compressed zram, 10 suits disk/SSD: fewer pointless disk accesses.", "Memory & swap", "vm.swappiness tuning")},
+    "zram": {
+        "ru": ("zram-swap", "Создаёт сжатый swap в оперативке (zram) через zram-generator: быстрее дискового swap, экономит SSD. Требует пакет zram-generator.", "Память и swap", "zram-swap"),
+        "en": ("zram-swap", "Creates compressed swap in RAM (zram) via zram-generator: faster than disk swap, saves SSD. Requires zram-generator package.", "Memory & swap", "zram-swap")},
+    "zswap": {
+        "ru": ("zswap (GRUB)", "Включает zswap — сжатый кэш перед дисковым swap: меньше обращений к диску, быстрее отклик при нехватке памяти. Совместим с обычным swap и гибернацией.", "Память и swap", "zswap"),
+        "en": ("zswap (GRUB)", "Enables zswap — a compressed cache in front of disk swap: fewer disk accesses, faster response under memory pressure. Works with normal swap and hibernation.", "Memory & swap", "zswap")},
+    "thp": {
+        "ru": ("Transparent HugePages", "Режим прозрачных огромных страниц: always (максимум), madvise (только по запросу приложений, рекомендуется для игр/БД), never (отключено).", "Память и swap", "transparent_hugepage"),
+        "en": ("Transparent HugePages", "Transparent huge pages mode: always (max), madvise (only on app request, recommended for games/DB), never (off).", "Memory & swap", "transparent_hugepage")},
     "sysctl_cache": {
         "ru": ("Кэш VFS (sysctl)", "vfs_cache_pressure=50: система дольше держит кэш каталогов и файлов в памяти, меньше повторных чтений с диска. Ускоряет работу с файлами.", "Ядро и загрузка", "vfs_cache_pressure=50"),
         "en": ("VFS cache (sysctl)", "vfs_cache_pressure=50: the system keeps directory/file cache in RAM longer, fewer disk re-reads. Speeds up file operations.", "Kernel & boot", "vfs_cache_pressure=50")},
     "sysctl_numa": {
         "ru": ("Миграция NUMA (sysctl)", "kernel.numa_balancing=0: отключает автоматическую миграцию страниц памяти между ядрами CPU. Уменьшает задержки в играх и чувствительных к latency задачах.", "Ядро и загрузка", "numa_balancing=0"),
         "en": ("NUMA migration (sysctl)", "kernel.numa_balancing=0: disables automatic memory page migration between CPU cores. Reduces stalls in games and latency-sensitive tasks.", "Kernel & boot", "numa_balancing=0")},
+    "reisub": {
+        "ru": ("REISUB (Magic SysRq)", "Включает аварийные клавиши SysRq (маска 244): при зависании удерживайте Alt+PrtSc и по порядку нажимайте R E I S U B для безопасного завершения процессов, синхронизации и перезагрузки без жёсткого сброса питания.", "Ядро и загрузка", "kernel.sysrq=244"),
+        "en": ("REISUB (Magic SysRq)", "Enables SysRq emergency keys (mask 244): on a freeze hold Alt+PrtSc and press R E I S U B in order to safely terminate processes, sync and reboot without a hard reset.", "Kernel & boot", "kernel.sysrq=244")},
     "ntsync": {
         "ru": ("ntsync (модуль ядра)", "Включает модуль ntsync — новый ускоритель синхронизации для Wine/Proton. Заметный прирост FPS в части игр. Требуется ядро 6.14+ или с патчем ntsync.", "Игры и совместимость", "модуль ядра ntsync"),
         "en": ("ntsync (kernel module)", "Enables the ntsync module — a new synchronization accelerator for Wine/Proton. Noticeable FPS gain in some games. Needs kernel 6.14+ or an ntsync-patched one.", "Gaming & compatibility", "ntsync kernel module")},
     "ntfs3": {
         "ru": ("ntfs3 драйвер", "Включает быстрый встроенный драйвер ntfs3 для NTFS-дисков вместо медленного ntfs-3g. Linux Mint по умолчанию его блокирует — опция снимает блокировку.", "Диски и файловые системы", "быстрый драйвер ntfs3"),
         "en": ("ntfs3 driver", "Enables the fast in-kernel ntfs3 driver for NTFS disks instead of slow ntfs-3g. Linux Mint blocks it by default — this option lifts the block.", "Drives & filesystems", "fast ntfs3 driver")},
+    "commit": {
+        "ru": ("commit=NN (fstab)", "Увеличивает интервал сброса метаданных ext4 на диск (по умолчанию 60 с): меньше мелких записей. Значение задаётся самим.", "Диски и файловые системы", "commit=NN"),
+        "en": ("commit=NN (fstab)", "Increases ext4 metadata commit interval (default 60 s): fewer small writes. Value is editable.", "Drives & filesystems", "commit=NN")},
     "aliases": {
         "ru": ("Команды в .bashrc", "Добавляет удобные команды терминала: upd, upgr, update_all (обновление всей системы), clean (очистка), space (место на диске), mem (очистка памяти) и другие.", "Удобство", "команды upd/upgr/clean в .bashrc"),
         "en": ("Commands in .bashrc", "Adds handy shell commands: upd, upgr, update_all (full system update), clean, space (disk free), mem (memory clean) and more.", "Convenience", "upd/upgr/clean commands in .bashrc")},
@@ -98,10 +123,10 @@ OPTIONS_META = {
 }
 
 CAT_ORDER = {
-    "ru": ["Видеокарта и графика", "Ядро и загрузка", "Логи системы", "Звук",
+    "ru": ["Видеокарта и графика", "Ядро и загрузка", "Логи системы", "Звук", "Сеть",
            "Память и swap", "Диски и файловые системы", "Игры и совместимость",
            "Удобство", "Обновления"],
-    "en": ["GPU & graphics", "Kernel & boot", "System logs", "Sound",
+    "en": ["GPU & graphics", "Kernel & boot", "System logs", "Sound", "Network",
            "Memory & swap", "Drives & filesystems", "Gaming & compatibility",
            "Convenience", "Updates"],
 }
@@ -111,20 +136,28 @@ OPTIONS_HELP = {
     "journald": {"ru": "journald — современный журнал systemd. Перенос его в ОЗУ (Storage=volatile) значит, что журналы не пишутся на диск вовсе и исчезают после перезагрузки. Это снижает износ SSD. Ограничение 50 МБ не даёт журналам съесть память.", "en": "journald is the modern systemd log. Moving it to RAM (Storage=volatile) means logs are never written to disk and vanish after reboot, reducing SSD wear. The 50 MB cap prevents logs from eating memory."},
     "audit": {"ru": "audit — подсистема ядра для записи каждого системного вызова (нужна в корпоративных средах для безопасности). Дома она только создаёт накладные расходы. Отключение (audit=0) слегка ускоряет систему и убирает лишние записи.", "en": "audit is a kernel subsystem logging every syscall (needed in corporate security environments). At home it only adds overhead. Disabling (audit=0) slightly speeds up the system and removes noise."},
     "raid": {"ru": "При загрузке ядро ищет RAID-массивы. Если у вас их нет, поиск тратит время впустую. raid=noautodetect отключает поиск и ускоряет загрузку. НЕ включайте, если используете RAID!", "en": "At boot the kernel probes for RAID arrays. If you have none, the probe wastes time. raid=noautodetect skips it and speeds up boot. DO NOT enable if you use RAID!"},
+    "nmi_watchdog": {"ru": "NMI-watchdog — механизм ядра для отладки зависаний через немаскируемые прерывания. На домашнем ПК он не нужен, а его периодические прерывания дают микро-фризы. Отключение (nmi_watchdog=0) убирает их.", "en": "The NMI watchdog is a kernel debugging facility using non-maskable interrupts. Unneeded at home; its periodic interrupts cause micro-stutters. Disabling (nmi_watchdog=0) removes them."},
     "corectrl": {"ru": "CoreCtrl — программа для тонкой настройки AMD GPU (частоты, вентиляторы, лимиты). По умолчанию её действия требуют пароль администратора. Это правило Polkit разрешает вашей группе пользователей управлять GPU без пароля.", "en": "CoreCtrl is a tool for fine-tuning AMD GPU (clocks, fans, limits). By default its actions require the admin password. This Polkit rule lets your user group control the GPU without a password."},
     "ppfeaturemask": {"ru": "Драйвер amdgpu на старых ядрах блокирует часть функций управления питанием. Параметр amdgpu.ppfeaturemask=0xffffffff снимает блокировку, и CoreCtrl получает полный контроль над частотами.", "en": "On older kernels the amdgpu driver blocks some power-management features. amdgpu.ppfeaturemask=0xffffffff lifts the block so CoreCtrl gets full clock control."},
+    "nvidia_modeset": {"ru": "nvidia-drm.modeset=1 включает kernel modesetting для проприетарного драйвера NVIDIA: необходимо для Wayland, плавного переключения видеорежимов и корректной работы композитора.", "en": "nvidia-drm.modeset=1 enables kernel modesetting for the proprietary NVIDIA driver: required for Wayland, smooth mode switching and correct compositing."},
     "vrr": {"ru": "VRR (FreeSync) позволяет монитору обновляться синхронно с кадрами игры, убирая разрывы картинки. Работает только в X11 с драйвером amdgpu и на мониторе с поддержкой FreeSync.", "en": "VRR (FreeSync) lets the monitor refresh in sync with game frames, removing tearing. Works only in X11 with the amdgpu driver and a FreeSync-capable monitor."},
     "radv": {"ru": "SAM / Resizable BAR даёт процессору доступ ко всей видеопамяти сразу, а не кусками. Это даёт небольшой прирост FPS в играх. Параметр включает оптимизацию в открытом драйвере RADV.", "en": "SAM / Resizable BAR gives the CPU access to all VRAM at once instead of chunks, giving a small FPS gain. This option enables the optimization in the open RADV driver."},
     "mesa": {"ru": "MESA кэширует скомпилированные шейдеры игр. По умолчанию кэш мал, и игры часто перекомпилируют шейдеры, вызывая подтормаживания. Увеличение кэша до 4 ГБ уменьшает эти паузы.", "en": "MESA caches compiled game shaders. The default cache is small so games recompile shaders often, causing hitches. Raising the cache to 4 GB reduces those pauses."},
     "pipewire": {"ru": "PipeWire — звуковой сервер. Малые буферы дают низкую задержку, но на некоторых системах вызывают треск и щелчки. Увеличение буферов (квантов) убирает артефакты ценой чуть большей задержки (незаметно на практике).", "en": "PipeWire is the sound server. Small buffers give low latency but on some systems cause crackling. Increasing the quanta removes artifacts at the cost of slightly higher latency (imperceptible in practice)."},
+    "bbr": {"ru": "BBR — современный алгоритм управления перегрузками TCP от Google. Вместе с очередью fq даёт более высокую реальную пропускную способность и меньшие задержки, особенно на нестабильных каналах.", "en": "BBR is Google's modern TCP congestion control. Together with the fq queue it gives higher real throughput and lower latency, especially on unstable links."},
     "swap": {"ru": "vm.swappiness управляет тем, как охотно система вытесняет память в swap. Высокое значение (150) выгодно для сжатого zram (память), низкое (10) — для диска/SSD, чтобы не дёргать диск лишний раз.", "en": "vm.swappiness controls how eagerly memory is pushed to swap. A high value (150) suits compressed zram (memory); a low value (10) suits disk/SSD to avoid needless disk access."},
+    "zram": {"ru": "zram создаёт сжатое блочное устройство в оперативной памяти и использует его как swap. Это быстрее дискового swap и экономит ресурс SSD. Требует установленный zram-generator; активируется после перезагрузки.", "en": "zram creates a compressed block device in RAM and uses it as swap. Faster than disk swap and saves SSD wear. Requires zram-generator; activates after reboot."},
+    "zswap": {"ru": "zswap — сжатый кэш в памяти ПЕРЕД дисковым swap: страницы сначала сжимаются в RAM и только при переполнении уходят на диск. Меньше обращений к диску, совместим с обычным swap и гибернацией.", "en": "zswap is a compressed cache in RAM in front of disk swap: pages compress in RAM first and only go to disk on overflow. Fewer disk accesses, works with normal swap and hibernation."},
+    "thp": {"ru": "Transparent HugePages — прозрачные огромные страницы памяти. always — всегда (может давать задержки), madvise — только по запросу приложений (рекомендуется для игр/БД), never — отключено. Значение передаётся через GRUB.", "en": "Transparent HugePages. always — always on (can cause stalls), madvise — only on app request (recommended for games/DB), never — off. The value is passed via GRUB."},
     "sysctl_cache": {"ru": "vfs_cache_pressure говорит ядру, как агрессивно освобождать кэш каталогов и файлов. Значение 50 (вместо 100) значит, что кэш держится дольше и файлы открываются быстрее, особенно при частой работе с множеством файлов.", "en": "vfs_cache_pressure tells the kernel how aggressively to free directory/file cache. Value 50 (instead of 100) keeps the cache longer so files open faster, especially with many files."},
     "sysctl_numa": {"ru": "kernel.numa_balancing автоматически переносит страницы памяти между ядрами CPU (полезно на серверах с NUMA). На домашних ПК это чаще вредит: миграция вызывает паузы. Отключение (0) убирает эти паузы.", "en": "kernel.numa_balancing automatically migrates memory pages between CPU cores (useful on NUMA servers). On home PCs it usually hurts: migration causes stalls. Disabling (0) removes those stalls."},
+    "reisub": {"ru": "kernel.sysrq=244 разрешает аварийные функции ядра Magic SysRq, из которых состоит последовательность REISUB: R (вернуть клавиатуру из-под X), E/I (корректно завершить/убить процессы), S (синхронизация дисков), U (remount read-only), B (перезагрузка). Маска 244 = сумма этих битов (4+16+32+64+128) без опасных отладочных функций. При зависании удерживайте Alt+PrtSc и нажимайте клавиши по порядку с интервалом 1–2 с.", "en": "kernel.sysrq=244 enables the Magic SysRq emergency functions that make up REISUB: R (unraw keyboard), E/I (terminate/kill processes), S (sync disks), U (remount read-only), B (reboot). Mask 244 = sum of these bits (4+16+32+64+128) without dangerous debug functions. On a freeze hold Alt+PrtSc and press the keys in order 1–2 s apart."},
     "ntsync": {"ru": "ntsync — новый модуль ядра, ускоряющий синхронизацию потоков в Wine/Proton. Игры под Windows используют много примитивов синхронизации; ntsync делает их быстрее, давая прирост FPS. Требует ядро 6.14+ или патченное.", "en": "ntsync is a new kernel module speeding up thread synchronization in Wine/Proton. Windows games use many sync primitives; ntsync makes them faster, giving FPS gains. Needs kernel 6.14+ or a patched one."},
-    "ntfs3": {"ru": "ntfs3 — современный встроенный драйвер NTFS (быстрый). Mint по умолчанию блокирует его и использует медленный ntfs-3g. Опция снимает блокировку, и NTFS-диски работают заметно быстрее.", "en": "ntfs3 is the modern in-kernel NTFS driver (fast). Mint blocks it by default and uses slow ntfs-3g. This option lifts the block so NTFS disks work noticeably faster."},
-    "aliases": {"ru": "Добавляет в ваш .bashrc готовые команды: upd (обновить списки), upgr (обновить пакеты), update_all (полное обновление), clean (очистка), space (место на диске), mem (очистка памяти) и др. Это экономит время на рутинных операциях.", "en": "Adds ready commands to your .bashrc: upd (update lists), upgr (upgrade packages), update_all (full update), clean (cleanup), space (disk free), mem (memory clean) etc. Saves time on routine operations."},
+    "ntfs3": {"ru": "ntfs3 — современный встроенный драйвер NTFS (быстрый). Mint блокирует его и использует медленный ntfs-3g. Опция снимает блокировку, и NTFS-диски работают заметно быстрее.", "en": "ntfs3 is the modern in-kernel NTFS driver (fast). Mint blocks it and uses slow ntfs-3g. This option lifts the block so NTFS disks work noticeably faster."},
+    "commit": {"ru": "commit=NN задаёт интервал (в секундах), с которым ext4 сбрасывает метаданные на диск. Больше значение — меньше мелких записей и меньше износа SSD, но чуть выше риск потери последних метаданных при сбое питания. По умолчанию 60.", "en": "commit=NN sets the interval (seconds) at which ext4 flushes metadata to disk. Higher value — fewer small writes and less SSD wear, but slightly higher risk of losing last metadata on power loss. Default 60."},
+    "aliases": {"ru": "Добавляет в ваш .bashrc готовые функции: upd (обновить списки), upgr (обновить пакеты), update_all (полное обновление), clean (очистка), space (место на диске), mem (очистка памяти) и др. Это экономит время на рутинных операциях.", "en": "Adds ready functions to your .bashrc: upd (update lists), upgr (upgrade packages), update_all (full update), clean (cleanup), space (disk free), mem (memory clean) etc. Saves time on routine operations."},
     "autoupdate": {"ru": "Создаёт systemd-таймер, который по расписанию обновляет систему и Flatpak. ВАЖНО: отключите встроенное автообновление Mint (mintupdate / автоматизацию), иначе обновления будут запускаться дважды и конфликтовать.", "en": "Creates a systemd timer that updates the system and Flatpak on schedule. IMPORTANT: disable the built-in Mint auto-update (mintupdate automation), otherwise updates will run twice and conflict."},
-    "mount": {"ru": "Опции монтирования noatime,nodiratime отключают обновление времени последнего доступа к файлам и каталогам. Это убирает лишние операции записи при каждом чтении, снижая износ SSD и ускоряя чтение. Вступает в силу после перезагрузки.", "en": "Mount options noatime,nodiratime disable updating last-access times for files and directories. This removes extra write operations on every read, reducing SSD wear and speeding up reads. Takes effect after reboot."},
+    "mount": {"ru": "Опция монтирования noatime отключает обновление времени последнего доступа к файлам и каталогам (nodiratime — её историческое подмножество, отдельно не требуется). Это убирает лишние операции записи при каждом чтении, снижая износ SSD и ускоряя чтение. Вступает в силу после перезагрузки.", "en": "The noatime mount option disables updating last-access times for files and directories (nodiratime is its historical subset and is not needed separately). This removes extra write operations on every read, reducing SSD wear and speeding up reads. Takes effect after reboot."},
     "steam": {"ru": "Игры Steam под Proton хранят данные (префиксы) в ~/.steam/steam/steamapps/compatdata. Если библиотека Steam лежит на другом диске (NTFS), игра не находит эти данные. Симлинк compatdata в библиотеке указывает на домашнюю папку, и игры работают корректно.", "en": "Steam Proton games store data (prefixes) in ~/.steam/steam/steamapps/compatdata. If a Steam library is on another disk (NTFS), games cannot find this data. A compatdata symlink in the library points to the home folder so games work correctly."},
 }
 
@@ -132,6 +165,8 @@ SERVICES_META = {
     "avahi-daemon.service": {"ru": "Сетевое обнаружение устройств (принтеры, ТВ, Chromecast). На домашнем ПК без сетевой печати почти не нужно.", "en": "Network device discovery (printers, TVs, Chromecast). Rarely needed on a home PC without network printing."},
     "avahi-daemon.socket": {"ru": "Сокет-активатор Avahi: будит службу при обращении из сети. Отключается вместе со службой.", "en": "Avahi socket activator: wakes the service on network requests. Disabled together with the service."},
     "cups-browsed.service": {"ru": "Автоматический поиск сетевых принтеров. Если у вас нет сетевого принтера — служба простаивает зря.", "en": "Automatic network printer discovery. Useless if you have no network printer."},
+    "cups.service": {"ru": "Сервер печати CUPS. Если принтера/сканера нет — служба не нужна.", "en": "CUPS print server. If you have no printer/scanner — unneeded."},
+    "cups.socket": {"ru": "Сокет CUPS: активирует службу печати при обращении. Отключается вместе с cups.service.", "en": "CUPS socket: activates printing on demand. Disabled together with cups.service."},
     "ModemManager.service": {"ru": "Управление USB-модемами (3G/4G). Без модема не нужен; иногда мешает serial-устройствам и Arduino.", "en": "USB modem (3G/4G) management. Useless without a modem; can interfere with serial devices and Arduino."},
     "openvpn.service": {"ru": "Встроенный VPN-сервер. Если не поднимаете собственный VPN — не нужен.", "en": "Built-in VPN server. Useless unless you run your own VPN."},
     "lvm2-monitor.service": {"ru": "Мониторинг LVM-томов. При обычной установке без LVM не нужен.", "en": "LVM volume monitoring. Useless on a plain install without LVM."},
@@ -143,8 +178,10 @@ SERVICES_META = {
 SERVICES_ORDER = list(SERVICES_META.keys())
 SERVICES_HELP = {
     "avahi-daemon.service": {"ru": "Avahi (mDNS/DNS-SD) позволяет устройствам в локальной сети находить друг друга без настройки: принтеры, колонки, ТВ. Если у вас нет сетевых принтеров и вы не пользуетесь Chromecast/AirPlay, служба не нужна и только периодически рассылает пакеты по сети. Отключение безопасно.", "en": "Avahi (mDNS/DNS-SD) lets local devices discover each other without setup: printers, speakers, TVs. If you have no network printers and don't use Chromecast/AirPlay, the service is unneeded and only periodically broadcasts on the network. Safe to disable."},
-    "avahi-daemon.socket": {"ru": "Сокет, который активирует Avahi при первом обращении из сети. Отключается вместе со службой avahi-daemon, чтобы служба не могла «проснуться» сама.", "en": "The socket that activates Avahi on first network request. Disabled together with avahi-daemon so the service cannot wake up on its own."},
+    "avahi-daemon.socket": {"ru": "Сокет активирует avahi-daemon при первом обращении из сети. Отключайте вместе со службой, чтобы avahi не «проснулась» сама.", "en": "The socket activates avahi-daemon on first network request. Disable together with the service so avahi cannot wake up on its own."},
     "cups-browsed.service": {"ru": "Часть системы печати CUPS: ищет сетевые принтеры и добавляет их автоматически. Если принтера нет или он подключён по USB, служба не нужна.", "en": "Part of the CUPS printing system: discovers network printers and adds them automatically. If you have no printer or it is USB-connected, the service is unneeded."},
+    "cups.service": {"ru": "CUPS обслуживает печать и сканирование. Если печатающих устройств нет, служба только висит фоном. Отключение безопасно; при необходимости печать можно включить обратно.", "en": "CUPS handles printing/scanning. With no printing devices the service just idles. Safe to disable; printing can be re-enabled later."},
+    "cups.socket": {"ru": "Сокет активирует cups.service при первом обращении к печати. Отключайте вместе с cups.service, чтобы печать не «проснулась» сама.", "en": "The socket activates cups.service on first print access. Disable together with cups.service so printing cannot wake up on its own."},
     "ModemManager.service": {"ru": "Управляет мобильными модемами (3G/4G). На ПК без модема служба не нужна; более того, она может мешать устройствам, которые определяются как serial-порты (Arduino, некоторые преобразователи).", "en": "Manages mobile modems (3G/4G). On a PC without a modem the service is unneeded; moreover it can interfere with devices that appear as serial ports (Arduino, some converters)."},
     "openvpn.service": {"ru": "Сервер OpenVPN для входящих VPN-подключений. Если вы не настроили собственный VPN-сервер, служба не активна и не нужна.", "en": "OpenVPN server for incoming VPN connections. If you have not set up your own VPN server, the service is inactive and unneeded."},
     "lvm2-monitor.service": {"ru": "Следит за томами LVM (логические диски). При обычной установке Mint/Ubuntu без LVM служба не нужна.", "en": "Monitors LVM volumes (logical disks). On a standard Mint/Ubuntu install without LVM the service is unneeded."},
@@ -160,18 +197,26 @@ OPTION_FILES = {
     "journald": ["/etc/systemd/journald.conf"],
     "audit": ["/etc/default/grub"],
     "raid": ["/etc/default/grub"],
+    "nmi_watchdog": ["/etc/default/grub"],
     "corectrl": ["/etc/polkit-1/rules.d/90-corectrl.rules",
                  "/etc/polkit-1/localauthority/50-local.d/90-corectrl.pkla"],
     "ppfeaturemask": ["/etc/default/grub"],
+    "nvidia_modeset": ["/etc/default/grub"],
     "vrr": ["/etc/X11/xorg.conf.d/20-amdgpu.conf"],
     "radv": ["/etc/environment"],
     "mesa": ["/etc/environment"],
     "pipewire": ["{home}/.config/pipewire/pipewire.conf.d/10-sound.conf"],
+    "bbr": ["/etc/sysctl.d/99-bbr.conf"],
     "swap": ["/etc/sysctl.d/99-gaming-swap.conf"],
+    "zram": ["/etc/systemd/zram-generator.conf"],
+    "zswap": ["/etc/default/grub"],
+    "thp": ["/etc/default/grub"],
     "sysctl_cache": ["/etc/sysctl.d/99-gaming-sysctl.conf"],
     "sysctl_numa": ["/etc/sysctl.d/99-gaming-sysctl.conf"],
+    "reisub": ["/etc/sysctl.d/99-sysrq.conf"],
     "ntsync": ["/etc/modules-load.d/ntsync.conf"],
     "ntfs3": ["/usr/lib/modprobe.d/mint-blacklist-ntfs3.conf"],
+    "commit": ["/etc/fstab"],
     "aliases": ["{home}/.bashrc"],
     "autoupdate": ["/etc/systemd/system/biweekly-upgrade.timer",
                    "/etc/systemd/system/biweekly-upgrade.service"],
@@ -199,34 +244,36 @@ STR = {
         "run_yes": "работает", "run_no": "остановлена",
         "svc_on_sel": "Включить выбранные", "svc_off_sel": "Отключить выбранные",
         "stat_refresh": "Обновить статус",
-        "st_hw": "ИНФОРМАЦИЯ О СИСТЕМЕ", "st_tweaks": "ТВИКИ",
-        "st_services": "СЛУЖБЫ", "st_kernel": "ПАРАМЕТРЫ ЯДРА",
+        "st_hw": "ИНФОРМАЦИЯ О СИСТЕМЕ", "st_parts": "РАЗДЕЛЫ СИСТЕМЫ",
+        "st_tweaks": "ТВИКИ", "st_services": "СЛУЖБЫ", "st_kernel": "ПАРАМЕТРЫ ЯДРА",
         "st_timer": "Таймер автообновлений",
-        "st_enabled": "включён", "st_disabled": "отключён",
-        "st_masked": "заблокирован", "st_notfound": "не найден",
+        "part_mount": "Раздел", "part_fs": "ФС", "part_total": "Всего",
+        "part_free": "Свободно",
         "os_lbl": "ОС", "gpu_lbl": "Видеокарта", "screen_lbl": "Разрешение экрана",
         "swap_lbl": "Файл подкачки", "kernel_lbl": "Ядро", "de_lbl": "Оболочка",
         "ram_lbl": "ОЗУ", "cpu_lbl": "Процессор", "disk_lbl": "Диск",
         "driver_lbl": "Драйвер видеокарты",
         "user_lbl": "Пользователь", "home_lbl": "Домашняя папка",
+        "hz": "Гц", "ram_hint": "(тип и частота — после ввода sudo)",
         "w_yes": "да", "w_no": "нет", "no_swap": "отсутствует",
         "gb": "ГБ", "free_w": "свободно", "swap_file": "файл", "swap_part": "раздел",
         "yes": "ПРИМЕНЕНО", "no": "НЕ ПРИМЕНЕНО",
         "sched_cur": "Текущее: %s", "sched_none": "не настроено",
         "mount_title": "Диски: параметры монтирования",
-        "mount_desc": "Добавит опции noatime,nodiratime в /etc/fstab (меньше служебных обращений к диску, полезно для SSD и NTFS). Вступает в силу после перезагрузки.",
+        "mount_desc": "Добавит опцию noatime в /etc/fstab (меньше служебных обращений к диску, полезно для SSD и NTFS; noatime покрывает и каталоги). Вступает в силу после перезагрузки.",
         "steam_title": "Steam: симлинки compatdata",
         "steam_desc": "Создаст ссылку compatdata на ~/.steam/steam/steamapps/compatdata для библиотек Steam на NTFS-разделах, чтобы игры видели данные Proton/Wine из домашней папки.",
         "mount_short": "параметры монтирования", "steam_short": "симлинк compatdata",
         "kern_sw": "насколько охотно система выгружает память в swap (меньше значение — реже)",
         "kern_vfs": "кэш файлов в памяти",
         "kern_numa": "миграция памяти между ядрами",
+        "tw_name": "Твик", "kn_param": "Параметр", "kn_val": "Значение",
         "sudo_title": "sudo", "sudo_prompt": "Пароль sudo (попытка %d из 3):",
         "sudo_wrong": "Неверный пароль или нет прав sudo.",
         "autoupdate_warn": "Включено автообновление по расписанию. Отключите встроенное автообновление Mint (mintupdate), иначе обновления будут выполняться дважды.",
         "viewer": "Просмотр файла", "viewer_ext": "Открыть во внешнем редакторе",
         "about_title": "О твикере",
-        "about_purpose": "Графическая оболочка для безопасного тюнинга Linux Mint / Ubuntu / Debian: твики производительности, логов, дисков и игр с откатом и бэкапами.",
+        "about_purpose": "Графическая оболочка тюнинга для Linux Mint / Ubuntu / Debian и других systemd-дистрибутивов: твики производительности, логов, дисков, сети и игр с откатом и бэкапами.",
         "about_author": "Автор", "about_author_name": "Дмитрий Свистунов",
         "about_ver": "Версия",
         "msg_run": "Скрипт уже запущен. Дождитесь завершения.",
@@ -234,34 +281,6 @@ STR = {
         "msg_sel": "Сначала выберите строки в таблице.",
         "msg_nofile": "Файл ещё не существует. Пути, где опция вносит изменения:",
         "msg_close": "Прервать выполнение и закрыть?",
-        "help_body": ("КАК ПОЛЬЗОВАТЬСЯ\n"
-                       "1. Вкладка «Тюнинг»: отметьте нужные опции. Зелёная метка «✓ применено»\n"
-                       "   означает, что настройка уже активна в системе (даже если вы делали её вручную).\n"
-                       "2. Недоступные на этом ПК опции показаны неактивными (галочку поставить нельзя).\n"
-                       "3. Значок «?» рядом с опцией открывает подробное описание для новичков.\n"
-                       "4. Нажмите «Применить выбранное» и введите пароль sudo при запросе.\n"
-                       "Текст можно копировать: выделение + Ctrl+C или правый клик мышью.\n\n"
-                       "СУХОЙ ПРОГОН\nГалочка «Сухой прогон» сверху: команды только показываются в логе,\n"
-                       "изменения в систему не вносятся.\n\n"
-                       "ДИСКИ: ПАРАМЕТРЫ МОНТИРОВАНИЯ\nОтметьте смонтированные разделы — в /etc/fstab им будут добавлены опции\n"
-                       "noatime,nodiratime (меньше обращений к диску). Изменения вступают в силу\n"
-                       "после перезагрузки. Откат убирает эти опции из fstab.\n\n"
-                       "STEAM: СИМЛИНКИ COMPATDATA\nДля отмеченных библиотек Steam на NTFS создаётся символическая\n"
-                       "ссылка <библиотека>/compatdata на ~/.steam/steam/steamapps/compatdata.\n"
-                       "Если compatdata уже существует как каталог с данными — он не трогается,\n"
-                       "в логе будет предупреждение. Откат удаляет только символические ссылки.\n\n"
-                       "ВКЛАДКА «СЛУЖБЫ»\nПоказывает состояние служб, которые обычно не нужны на домашнем ПК.\n"
-                       "Клик по строке выводит описание в панели под таблицей;\n"
-                       "клик по «?» в строке открывает подробную справку.\n\n"
-                       "ВКЛАДКА «СТАТУС»\nСводка по системе. В разделе «ТВИКИ» зелёным показаны применённые\n"
-                       "настройки, красным — нет, рядом краткое описание.\n\n"
-                       "ОТКАТ ИЗМЕНЕНИЙ\nПеред изменением любого файла копия сохраняется в ~/system-tuneup-backups\n"
-                       "(одна последняя копия каждого файла). Для отката:\n"
-                       "- отметьте опции и нажмите «Откатить выбранное»;\n"
-                       "- rsyslog: sudo systemctl unmask rsyslog && sudo systemctl enable --now rsyslog;\n"
-                       "- GRUB-параметры удаляются вместе с update-grub при откате;\n"
-                       "- службы: выделите на вкладке «Службы» и нажмите «Включить выбранные».\n\n"
-                       "Окна справки и подсказок закрываются кликом вне окна."),
     },
     "en": {
         "tab_tune": "Tuning", "tab_serv": "Services", "tab_stat": "Status",
@@ -284,34 +303,36 @@ STR = {
         "run_yes": "running", "run_no": "stopped",
         "svc_on_sel": "Enable selected", "svc_off_sel": "Disable selected",
         "stat_refresh": "Refresh status",
-        "st_hw": "SYSTEM INFORMATION", "st_tweaks": "TWEAKS",
-        "st_services": "SERVICES", "st_kernel": "KERNEL PARAMETERS",
+        "st_hw": "SYSTEM INFORMATION", "st_parts": "SYSTEM PARTITIONS",
+        "st_tweaks": "TWEAKS", "st_services": "SERVICES", "st_kernel": "KERNEL PARAMETERS",
         "st_timer": "Auto-update timer",
-        "st_enabled": "enabled", "st_disabled": "disabled",
-        "st_masked": "blocked", "st_notfound": "not found",
+        "part_mount": "Partition", "part_fs": "FS", "part_total": "Total",
+        "part_free": "Free",
         "os_lbl": "OS", "gpu_lbl": "GPU", "screen_lbl": "Screen resolution",
         "swap_lbl": "Swap", "kernel_lbl": "Kernel", "de_lbl": "Desktop",
         "ram_lbl": "RAM", "cpu_lbl": "CPU", "disk_lbl": "Disk",
         "driver_lbl": "GPU driver",
         "user_lbl": "User", "home_lbl": "Home folder",
+        "hz": "Hz", "ram_hint": "(type & speed after sudo)",
         "w_yes": "yes", "w_no": "no", "no_swap": "none",
         "gb": "GB", "free_w": "free", "swap_file": "file", "swap_part": "partition",
         "yes": "APPLIED", "no": "NOT APPLIED",
         "sched_cur": "Current: %s", "sched_none": "not configured",
         "mount_title": "Disks: mount options",
-        "mount_desc": "Adds noatime,nodiratime to /etc/fstab entries (less disk wear, useful for SSD and NTFS). Takes effect after reboot.",
+        "mount_desc": "Adds the noatime option to /etc/fstab entries (less disk wear; noatime already covers directories). Takes effect after reboot.",
         "steam_title": "Steam: compatdata symlinks",
         "steam_desc": "Creates a compatdata symlink to ~/.steam/steam/steamapps/compatdata for Steam libraries on NTFS partitions so games can see Proton/Wine data from the home folder.",
         "mount_short": "mount options", "steam_short": "compatdata symlink",
         "kern_sw": "how eagerly the system moves memory to swap (lower = less often)",
         "kern_vfs": "file cache in RAM",
         "kern_numa": "memory migration between cores",
+        "tw_name": "Tweak", "kn_param": "Parameter", "kn_val": "Value",
         "sudo_title": "sudo", "sudo_prompt": "sudo password (attempt %d of 3):",
         "sudo_wrong": "Wrong password or no sudo rights.",
         "autoupdate_warn": "Scheduled auto-update enabled. Disable the built-in Mint auto-update (mintupdate), otherwise updates will run twice.",
         "viewer": "File viewer", "viewer_ext": "Open in external editor",
         "about_title": "About",
-        "about_purpose": "A graphical shell for safe tuning of Linux Mint / Ubuntu / Debian: performance, logs, disk and gaming tweaks with rollback and backups.",
+        "about_purpose": "A graphical tuning shell for Linux Mint / Ubuntu / Debian and other systemd distributions: performance, logs, disk, network and gaming tweaks with rollback and backups.",
         "about_author": "Author", "about_author_name": "Dmitry Svistunov",
         "about_ver": "Version",
         "msg_run": "A job is already running. Wait for it to finish.",
@@ -319,77 +340,8 @@ STR = {
         "msg_sel": "Select table rows first.",
         "msg_nofile": "This file appears after applying the option. Paths the option modifies:",
         "msg_close": "Interrupt the job and close?",
-        "help_body": ("HOW TO USE\n"
-                       "1. Tuning tab: tick the options you want. A green \"applied\" mark means\n"
-                       "   the setting is already active (even if you configured it manually).\n"
-                       "2. Options unavailable on this PC are shown disabled (cannot be ticked).\n"
-                       "3. The “?” icon next to an option opens a detailed beginner description.\n"
-                       "4. Press \"Apply selected\" and enter your sudo password when asked.\n"
-                       "Text can be copied: select + Ctrl+C or right-click.\n\n"
-                       "DRY RUN\nTick \"Dry run\" at the top: commands are only printed to the log.\n\n"
-                       "DISKS: MOUNT OPTIONS\nTick mounted partitions — noatime,nodiratime will be added to their\n"
-                       "/etc/fstab entries (less disk wear). Changes take effect after reboot.\n"
-                       "Rollback removes these options from fstab.\n\n"
-                       "STEAM: COMPATDATA SYMLINKS\nFor ticked Steam libraries on NTFS a symlink\n"
-                       "<library>/compatdata -> ~/.steam/steam/steamapps/compatdata is created.\n"
-                       "If compatdata already exists as a directory with data it is left untouched\n"
-                       "with a warning in the log. Rollback removes symlinks only.\n\n"
-                       "SERVICES TAB\nShows services usually unneeded on a home PC.\n"
-                       "Clicking a row shows the description in the panel below the table;\n"
-                       "clicking “?” in a row opens detailed help.\n\n"
-                       "STATUS TAB\nSystem summary. In the TWEAKS section green means applied, red means not\n"
-                       "applied, with a short description next to each line.\n\n"
-                       "ROLLBACK\nBefore modifying any file a copy is saved to ~/system-tuneup-backups\n"
-                       "(one latest copy per file). To roll back:\n"
-                       "- tick options and press \"Rollback selected\";\n"
-                       "- rsyslog: sudo systemctl unmask rsyslog && sudo systemctl enable --now rsyslog;\n"
-                       "- GRUB parameters are removed together with update-grub on rollback;\n"
-                       "- services: select on the Services tab and press \"Enable selected\".\n\n"
-                       "Help and info windows close on a click outside the window."),
     },
 }
-
-QSS = """
-QMainWindow, QWidget#central { background: {bg}; }
-QScrollArea { background: {panel}; border: none; }
-QScrollArea > QWidget > QWidget { background: {panel}; }
-QWidget#optinner { background: {panel}; }
-QTabWidget::pane { border: 1px solid {border}; border-radius: 10px; background: {panel}; }
-QTabBar::tab { background: {tab}; color: {fg}; padding: 9px 22px; border-top-left-radius: 10px; border-top-right-radius: 10px; margin-right: 3px; }
-QTabBar::tab:selected { background: qlineargradient(x1:0,y1:0,x2:1,y2:1, stop:0 {accent}, stop:1 {accent2}); color: {accent_fg}; font-weight: bold; }
-QTabBar::tab:hover:!selected { background: {tab_hover}; }
-QPushButton { background: {button}; color: {fg}; border: none; border-radius: 9px; padding: 8px 14px; }
-QPushButton:hover { background: {button_hover}; }
-QPushButton:disabled { background: {button_dis}; color: {fg_dis}; }
-QPushButton#accent { background: qlineargradient(x1:0,y1:0,x2:1,y2:1, stop:0 {accent}, stop:1 {accent2}); color: {accent_fg}; font-weight: bold; }
-QPushButton#accent:hover { background: {accent2}; }
-QPushButton#qbtn { background: {button}; color: {blue}; font-weight: bold; border-radius: 12px; padding: 2px 8px; }
-QCheckBox { color: {fg}; spacing: 8px; }
-QCheckBox::indicator { width: 18px; height: 18px; border-radius: 5px; border: 2px solid {scroll}; background: {panel}; }
-QCheckBox::indicator:checked { background: {accent}; border-color: {accent}; }
-QCheckBox:disabled { color: {fg_dis}; }
-QLineEdit, QComboBox { background: {entry}; color: {fg}; border: 1px solid {border}; border-radius: 7px; padding: 4px 8px; }
-QComboBox::drop-down { border: none; width: 22px; }
-QTableWidget { background: {panel}; color: {fg}; gridline-color: {border}; border: 1px solid {border}; border-radius: 10px; }
-QTableWidget::item:selected { background: {sel}; }
-QHeaderView::section { background: {tab}; color: {fg}; padding: 7px; border: none; border-right: 1px solid {border}; }
-QTextEdit { background: {terminal}; color: {terminal_fg}; border: 1px solid {border}; border-radius: 10px; }
-QScrollBar:vertical { background: {panel}; width: 10px; border-radius: 5px; }
-QScrollBar::handle:vertical { background: {scroll}; border-radius: 5px; min-height: 24px; }
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-QScrollBar:horizontal { background: {panel}; height: 10px; border-radius: 5px; }
-QScrollBar::handle:horizontal { background: {scroll}; border-radius: 5px; min-width: 24px; }
-QFrame#optrow { background: transparent; border-radius: 10px; }
-QFrame#optrow:hover { background: {row_hover}; }
-QLabel#badge_yes { background: {green_bg}; color: {green}; border-radius: 7px; padding: 3px 9px; font-weight: bold; }
-QLabel#badge_no { background: {gray_bg}; color: {gray}; border-radius: 7px; padding: 3px 9px; }
-QFrame#toast { background: {panel}; border: 1px solid {border}; border-radius: 12px; }
-QMenu { background: {panel}; color: {fg}; border: 1px solid {border}; border-radius: 8px; padding: 6px; }
-QMenu::item { padding: 6px 18px; border-radius: 6px; }
-QMenu::item:selected { background: {row_hover}; }
-QToolTip { background: {panel}; color: {fg}; border: 1px solid {border}; }
-QDialog#infodlg { background: {panel}; border: 2px solid {accent}; border-radius: 12px; }
-"""
 
 
 def decode_bytes(v):
@@ -485,19 +437,6 @@ def find_steam_libraries(user_home):
     return libs
 
 
-def _gear_path(cx, cy, r):
-    path = QPainterPath()
-    for i in range(8):
-        tr = QTransform().translate(cx, cy).rotate(i * 45.0).translate(-cx, -cy)
-        rect = QRectF(cx - r * 0.16, cy - r, r * 0.32, r * 0.42)
-        path.addRect(tr.mapRect(rect))
-    ring = QPainterPath()
-    ring.addEllipse(QRectF(cx - r * 0.66, cy - r * 0.66, r * 1.32, r * 1.32))
-    hole = QPainterPath()
-    hole.addEllipse(QRectF(cx - r * 0.28, cy - r * 0.28, r * 0.56, r * 0.56))
-    return path + (ring - hole)
-
-
 def make_icon(kind, size=48, accent="#4ec9b0", fg="#d4d4d4"):
     px = QPixmap(size, size)
     px.fill(Qt.GlobalColor.transparent)
@@ -581,8 +520,42 @@ def make_icon(kind, size=48, accent="#4ec9b0", fg="#d4d4d4"):
         p.drawLine(int(size * 0.5), int(size * 0.5), int(size * 0.5), int(size * 0.62))
         p.setPen(Qt.PenStyle.NoPen)
         p.drawEllipse(int(size * 0.46), int(size * 0.68), int(size * 0.09), int(size * 0.09))
+    elif kind == "close":
+        p.setPen(QPen(QColor(accent), max(2, int(size * 0.14))))
+        p.drawLine(int(size * 0.26), int(size * 0.26), int(size * 0.74), int(size * 0.74))
+        p.drawLine(int(size * 0.74), int(size * 0.26), int(size * 0.26), int(size * 0.74))
+    elif kind == "selall":
+        p.setPen(QPen(QColor(accent), max(2, int(size * 0.1))))
+        p.drawRect(int(size * 0.2), int(size * 0.2), int(size * 0.6), int(size * 0.6))
+        p.drawLine(int(size * 0.32), int(size * 0.5), int(size * 0.45), int(size * 0.62))
+        p.drawLine(int(size * 0.45), int(size * 0.62), int(size * 0.7), int(size * 0.36))
+    elif kind == "selnone":
+        p.setPen(QPen(QColor(accent), max(2, int(size * 0.1))))
+        p.drawRect(int(size * 0.2), int(size * 0.2), int(size * 0.6), int(size * 0.6))
+    elif kind == "on":
+        p.setPen(QPen(QColor(accent), max(2, int(size * 0.12))))
+        p.drawLine(int(size * 0.5), int(size * 0.2), int(size * 0.5), int(size * 0.5))
+        p.drawArc(int(size * 0.28), int(size * 0.34), int(size * 0.44), int(size * 0.44),
+                  30 * 16, 300 * 16)
+    elif kind == "off":
+        p.setPen(QPen(QColor(accent), max(2, int(size * 0.12))))
+        p.drawLine(int(size * 0.5), int(size * 0.2), int(size * 0.5), int(size * 0.5))
+        p.drawRect(int(size * 0.3), int(size * 0.5), int(size * 0.4), int(size * 0.28))
     p.end()
     return px
+
+
+def _gear_path(cx, cy, r):
+    path = QPainterPath()
+    for i in range(8):
+        tr = QTransform().translate(cx, cy).rotate(i * 45.0).translate(-cx, -cy)
+        rect = QRectF(cx - r * 0.16, cy - r, r * 0.32, r * 0.42)
+        path.addRect(tr.mapRect(rect))
+    ring = QPainterPath()
+    ring.addEllipse(QRectF(cx - r * 0.66, cy - r * 0.66, r * 1.32, r * 1.32))
+    hole = QPainterPath()
+    hole.addEllipse(QRectF(cx - r * 0.28, cy - r * 0.28, r * 0.56, r * 0.56))
+    return path + (ring - hole)
 
 
 class SudoManager:
@@ -758,7 +731,6 @@ class SystemOps:
         self.log = log
         self.dry_run = dry_run
         self.grub_changed = False
-        self._unit_cache = None
         self.backup_dir = os.path.join(state.user_home, "system-tuneup-backups")
 
     def backup_file(self, path):
@@ -896,24 +868,18 @@ class SystemOps:
         return self.write_file(path, "\n".join(new_lines) + "\n",
                                chmod=chmod, mkdir=mkdir, backup=False)
 
-    def unit_names(self):
-        if self._unit_cache is None:
-            try:
-                res = subprocess.run(["systemctl", "list-unit-files",
-                                      "--type=service", "--no-legend", "--no-pager"],
-                                     capture_output=True, text=True, timeout=10)
-                names = set()
-                for line in res.stdout.splitlines():
-                    parts = line.split()
-                    if parts:
-                        names.add(parts[0])
-                self._unit_cache = names
-            except Exception:
-                self._unit_cache = set()
-        return self._unit_cache
-
     def unit_exists(self, name):
-        return name in self.unit_names()
+        try:
+            res = subprocess.run(["systemctl", "list-unit-files", name,
+                                  "--no-legend", "--no-pager"],
+                                 capture_output=True, timeout=5)
+            for line in decode_bytes(res.stdout).splitlines():
+                parts = line.split()
+                if parts and parts[0] == name:
+                    return True
+        except Exception:
+            pass
+        return False
 
     def service_enabled(self, name):
         if not self.unit_exists(name):
@@ -946,11 +912,11 @@ class SystemOps:
             return True
         path = "/etc/default/grub"
         content = self.read_file(path)
-        if not content:
+        if content is None:
             self.log("Cannot read %s" % path, "error")
             return False
-        new_lines, found, changed = [], False, False
-        for line in content.splitlines():
+        lines, found, changed = [], False, False
+        for line in lines_in(content):
             m = re.match(r"^\s*GRUB_CMDLINE_LINUX_DEFAULT=(.*)$", line)
             if m:
                 found = True
@@ -959,7 +925,8 @@ class SystemOps:
                 orig = parts.copy()
                 parts += [x for x in params if x not in parts]
                 if parts != orig:
-                    new_lines.append('GRUB_CMDLINE_LINUX_DEFAULT="' + " ".join(parts) + '"')
+                    new_lines_val = 'GRUB_CMDLINE_LINUX_DEFAULT="' + " ".join(parts) + '"'
+                    new_lines.append(new_lines_val)
                     changed = True
                 else:
                     new_lines.append(line)
@@ -975,6 +942,40 @@ class SystemOps:
         if self.write_file(path, "\n".join(new_lines) + "\n", backup=False):
             self.grub_changed = True
             self.log("GRUB: params added", "success")
+            return True
+        return False
+
+    def _grub_set_param(self, token):
+        if self.dry_run:
+            self.log("[DRY RUN] GRUB set: %s" % token, "warning")
+            return True
+        path = "/etc/default/grub"
+        content = self.read_file(path)
+        if content is None:
+            self.log("Cannot read %s" % path, "error")
+            return False
+        key = token.split("=")[0]
+        lines, changed = [], False
+        for line in lines_in(content):
+            m = re.match(r"^\s*GRUB_CMDLINE_LINUX_DEFAULT=(.*)$", line)
+            if m:
+                raw = m.group(1).strip().strip('"').strip("'")
+                parts = [p for p in raw.split() if p and not p.startswith(key + "=")]
+                if token not in parts:
+                    parts.append(token)
+                newl = 'GRUB_CMDLINE_LINUX_DEFAULT="' + " ".join(parts) + '"'
+                if newl != line.strip():
+                    changed = True
+                lines.append(newl)
+            else:
+                lines.append(line)
+        if not changed:
+            self.log("GRUB already has %s" % token, "info")
+            return True
+        self.backup_file(path)
+        if self.write_file(path, "\n".join(lines) + "\n", backup=False):
+            self.grub_changed = True
+            self.log("GRUB: %s set" % token, "success")
             return True
         return False
 
@@ -1021,7 +1022,7 @@ class SystemOps:
                 and re.search(r"^\s*RuntimeMaxUse\s*=\s*50M\s*$", content, re.M)):
             self.log("journald already configured", "info"); return True
         new_lines = []
-        for line in content.splitlines():
+        for line in lines_in(content):
             if re.match(r"^\s*(Storage|RuntimeMaxUse)\s*=", line):
                 new_lines.append(line if line.lstrip().startswith("#") else "# " + line)
             else:
@@ -1043,6 +1044,9 @@ class SystemOps:
             self.log("RAID detected, skipping", "warning"); return True
         return self.add_grub_params(["raid=noautodetect"])
 
+    def apply_nmi_watchdog(self, params=None):
+        return self.add_grub_params(["nmi_watchdog=0"])
+
     def _polkit_is_new(self):
         try:
             res = subprocess.run(["pkaction", "--version"],
@@ -1060,12 +1064,13 @@ class SystemOps:
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*", group):
             self.log("Bad group name: %s" % group, "error"); return False
         if self.dry_run:
-            self.log("[DRY RUN] CoreCtrl rule for %s" % group, "warning"); return True
+            self.log("[DRY RUN] CoreCtrl polkit rule for %s" % group, "warning")
+            return True
         try:
             grp.getgrnam(group)
         except KeyError:
             self.log("Group not found: %s" % group, "error"); return False
-        if self._polkit_new():
+        if self._polkit_is_new():
             content = ("polkit.addRule(function(action, subject) {\n"
                        '    if ((action.id == "org.corectrl.helper.init" ||\n'
                        '         action.id == "org.corectrl.helperkiller.init") &&\n'
@@ -1088,6 +1093,9 @@ class SystemOps:
     def apply_ppfeaturemask(self, params=None):
         return self.add_grub_params(["amdgpu.ppfeaturemask=0xffffffff"])
 
+    def apply_nvidia_modeset(self, params=None):
+        return self.add_grub_params(["nvidia-drm.modeset=1"])
+
     def apply_vrr(self, params=None):
         if self.state.gpu not in ("AMD", "Unknown"):
             self.log("VRR is AMD-only", "warning"); return True
@@ -1100,11 +1108,19 @@ class SystemOps:
             self.log("✓ VRR/FreeSync enabled", "success"); return True
         return False
 
+    def apply_radv(self, params=None):
+        return self.ensure_line("/etc/environment", "RADV_PERFTEST=sam",
+                                r"^\s*RADV_PERFTEST=.*")
+
+    def apply_mesa(self, params=None):
+        return self.ensure_line("/etc/environment", "MESA_SHADER_CACHE_MAX_SIZE=4G",
+                                r"^\s*MESA_SHADER_CACHE_MAX_SIZE=.*")
+
     def apply_pipewire(self, params=None):
         d = os.path.join(self.state.user_home, ".config", "pipewire", "pipewire.conf.d")
         path = os.path.join(d, "10-sound.conf")
         if self.dry_run:
-            self.log("[DRY RUN] PipeWire config", "warning"); return True
+            self.log("[DRY RUN] PipeWire config: %s" % path, "warning"); return True
         content = ("context.properties = {\n    default.clock.min-quantum = 512\n"
                    "    default.clock.quantum = 4096\n"
                    "    default.clock.max-quantum = 8192\n}\n")
@@ -1122,13 +1138,13 @@ class SystemOps:
                           ignore_error=True)
         self.log("✓ PipeWire configured", "success"); return True
 
-    def apply_mesa(self, params=None):
-        return self.ensure_line("/etc/environment", "MESA_SHADER_CACHE_MAX_SIZE=4G",
-                                r"^\s*MESA_SHADER_CACHE_MAX_SIZE=.*")
-
-    def apply_radv(self, params=None):
-        return self.ensure_line("/etc/environment", "RADV_PERFTEST=sam",
-                                r"^\s*RADV_PERFTEST=.*")
+    def apply_bbr(self, params=None):
+        path = "/etc/sysctl.d/99-bbr.conf"
+        content = "net.core.default_qdisc=fq\nnet.ipv4.tcp_congestion_control=bbr\n"
+        if self.write_file(path, content, chmod="644", mkdir=True):
+            self.sudo_run(["sysctl", "-p", path], ignore_error=True)
+            self.log("✓ TCP BBR enabled", "success"); return True
+        return False
 
     def apply_swap(self, params=None):
         params = params or {}
@@ -1154,6 +1170,26 @@ class SystemOps:
         self.sudo_run(["sysctl", "-p", path], ignore_error=True)
         self.log("✓ swappiness=%d" % iv, "success"); return True
 
+    def apply_zram(self, params=None):
+        gen = "/usr/lib/systemd/system-generators/zram-generator"
+        if not os.path.exists(gen):
+            self.log("zram-generator not installed", "warning"); return False
+        path = "/etc/systemd/zram-generator.conf"
+        content = "[zram0]\nzram-size = ram-size / 2\ncompression-algorithm = zstd\n"
+        if self.write_file(path, content, chmod="644", mkdir=True):
+            self.sudo_run(["systemctl", "daemon-reload"], ignore_error=True)
+            self.log("✓ zram configured (reboot to activate)", "success"); return True
+        return False
+
+    def apply_zswap(self, params=None):
+        return self.add_grub_params(["zswap.enabled=1", "zswap.compressor=zstd",
+                                     "zswap.zpool=z3fold"])
+
+    def apply_thp(self, params=None):
+        params = params or {}
+        val = params.get("thp_value", "madvise")
+        return self._grub_set_param("transparent_hugepage=%s" % val)
+
     def _sysctl_set(self, key, val):
         if self.dry_run:
             self.log("[DRY RUN] %s=%s" % (key, val), "warning"); return True
@@ -1161,7 +1197,7 @@ class SystemOps:
         content = self.read_file(path) or ""
         rx = re.compile(r"^\s*%s\s*=" % re.escape(key))
         out, replaced = [], False
-        for l in content.splitlines():
+        for l in lines_in(content):
             if rx.match(l):
                 out.append("%s=%s" % (key, val)); replaced = True
             else:
@@ -1181,7 +1217,7 @@ class SystemOps:
         path = "/etc/sysctl.d/99-gaming-sysctl.conf"
         content = self.read_file(path) or ""
         rx = re.compile(r"^\s*%s\s*=" % re.escape(key))
-        old = content.splitlines()
+        old = lines_in(content)
         out = [l for l in old if not rx.match(l)]
         if len(out) == len(old):
             self.log("%s not found in %s" % (key, path), "info")
@@ -1197,11 +1233,14 @@ class SystemOps:
     def apply_sysctl_numa(self, params=None):
         return self._sysctl_set("kernel.numa_balancing", "0")
 
-    def rollback_sysctl_cache(self, params=None):
-        return self._sysctl_del("vm.vfs_cache_pressure", "100")
-
-    def rollback_sysctl_numa(self, params=None):
-        return self._sysctl_del("kernel.numa_balancing", "1")
+    def apply_reisub(self, params=None):
+        path = "/etc/sysctl.d/99-sysrq.conf"
+        content = "kernel.sysrq = 244\n"
+        if self.write_file(path, content, chmod="644", mkdir=True):
+            self.sudo_run(["sysctl", "-p", path], ignore_error=True)
+            self.log("✓ Magic SysRq (REISUB) enabled (kernel.sysrq=244)", "success")
+            return True
+        return False
 
     def apply_ntsync(self, params=None):
         if self.dry_run:
@@ -1235,160 +1274,10 @@ class SystemOps:
             return False
         self.log("blacklist ntfs3 not found", "warning"); return True
 
-    def apply_aliases(self, params=None):
-        bashrc = os.path.join(self.state.user_home, ".bashrc")
-        if self.dry_run:
-            self.log("[DRY RUN] add commands to .bashrc", "warning"); return True
-        if not self.path_exists(bashrc):
-            self.log(".bashrc not found", "error"); return False
-        content = self.read_file(bashrc)
-        if content is None:
-            self.log("Cannot read .bashrc", "error"); return False
-        sm = "# >>> system-tuneup commands >>>"
-        em = "# <<< system-tuneup commands <<<"
-        without, skip = [], False
-        for line in content.splitlines():
-            if line.strip() == sm:
-                skip = True; continue
-            if line.strip() == em:
-                skip = False; continue
-            if not skip:
-                without.append(line)
-        names = ["upd", "upgr", "spices", "update_all", "inst", "remove", "search",
-                 "info", "clean", "space", "fix", "mem", "serv", "update_time"]
-        np_ = "|".join(names)
-        arx = re.compile(r"^\s*alias\s+(" + np_ + r")=")
-        frx = re.compile(r"^\s*(" + np_ + r")\s*\(\)\s*\{")
-        cleaned, skip_fn = [], False
-        for line in without:
-            if arx.match(line):
-                continue
-            if frx.match(line):
-                if "}" in line:
-                    continue
-                skip_fn = True; continue
-            if skip_fn:
-                if line.strip().startswith("}"):
-                    skip_fn = False
-                continue
-            if "system-tuneup" in line and line.strip().startswith("#"):
-                continue
-            cleaned.append(line)
-        spices, has_fp = self._spices(), self.state.has_flatpak
-        block = [sm, "# system-tuneup commands", ""]
-        block += ["upd() {", '    echo "APT update..."', "    sudo apt update", "}", ""]
-        block += ["upgr() {", '    echo "APT upgrade..."', "    sudo apt full-upgrade"]
-        if has_fp:
-            block.append('    echo "Flatpak update..."')
-            if spices:
-                block.append("    flatpak update && cinnamon-spice-updater --update-all")
-            else:
-                block.append("    flatpak update")
-        block += ["}", ""]
-        if spices:
-            block += ["spices() {", '    echo "Cinnamon spices update..."',
-                      "    cinnamon-spice-updater --update-all", "}", ""]
-        block += ["update_all() {", "    sudo apt update && sudo apt full-upgrade -y"]
-        if has_fp:
-            block.append("    flatpak update -y")
-        if spices:
-            block.append("    cinnamon-spice-updater --update-all")
-        block += ['    echo "Done."', "}", ""]
-        block += ["# Дополнительные команды (system-tuneup)",
-                  'inst() { sudo apt install "$@"; }',
-                  'remove() { sudo apt purge --autoremove "$@"; }',
-                  'search() { apt search "$@"; }', 'info() { apt show "$@"; }', ""]
-        block += ["clean() {", "    sudo apt autoremove -y && sudo apt autoclean && sudo apt clean", "}", ""]
-        block += ["space() {", "    df -h /", "}", ""]
-        block += ["fix() {", "    sudo apt --fix-broken install -y && sudo dpkg --configure -a", "}", ""]
-        block += ["mem() {", "    sync && sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches' && free -h", "}", ""]
-        block += ["serv() {", "    systemctl list-unit-files --type=service | less", "}", ""]
-        block += ["update_time() {",
-                  "    systemctl list-timers --no-pager 2>/dev/null | "
-                  'grep -E "NEXT|upgrade|update|apt" || echo "No timers"', "}", ""]
-        block.append(em)
-        while cleaned and cleaned[-1].strip() == "":
-            cleaned.pop()
-        new = "\n".join(cleaned + [""] + block) + "\n"
-        if new == content:
-            self.log("Commands already added", "info"); return True
-        self.backup_file(bashrc)
-        if not self.write_file(bashrc, new, backup=False):
-            return False
-        if self.state.user_name and self.state.user_name != "root":
-            self.sudo_run(["chown", "%s:%s" % (self.state.user_name, self.state.user_name),
-                           bashrc], ignore_error=True)
-        self.log("✓ commands added to .bashrc", "success"); return True
-
-    def apply_autoupdate(self, params=None):
-        params = params or {}
-        sched = params.get("update_schedule", "Отключено")
-        table = {
-            "Ежедневно": ("*-*-* 18:30:00", "daily 18:30"),
-            "Еженедельно (суббота)": ("Sat 18:30:00", "weekly Sat"),
-            "2 раза в месяц (1 и 15)": ("*-*-1,15 18:30:00", "1st & 15th"),
-            "Ежемесячно (1 число)": ("*-*-1 18:30:00", "monthly 1st"),
-            "Daily": ("*-*-* 18:30:00", "daily 18:30"),
-            "Weekly (Saturday)": ("Sat 18:30:00", "weekly Sat"),
-            "Twice a month (1 & 15)": ("*-*-1,15 18:30:00", "1st & 15th"),
-            "Monthly (1st)": ("*-*-1 18:30:00", "monthly 1st"),
-            "Disabled": (None, None), "Отключено": (None, None),
-        }
-        svc = "/etc/systemd/system/biweekly-upgrade.service"
-        tmr = "/etc/systemd/system/biweekly-upgrade.timer"
-        exists = self.path_exists(tmr) or self.path_exists(svc)
-        if sched in ("Отключено", "Disabled"):
-            if not exists:
-                self.log("Timer not found", "info"); return True
-            if self.dry_run:
-                self.log("[DRY RUN] remove timer", "warning"); return True
-            self.sudo_run(["systemctl", "disable", "--now", "biweekly-upgrade.timer"],
-                          ignore_error=True)
-            self.sudo_run(["rm", "-f", svc, tmr], ignore_error=True)
-            self.sudo_run(["systemctl", "daemon-reload"], ignore_error=True)
-            self.log("✓ timer removed", "success"); return True
-        if sched not in table:
-            self.log("Unknown schedule: %s" % sched, "error"); return False
-        onc, desc = table[sched]
-        cmd = "apt update && apt full-upgrade -y"
-        if self.state.has_flatpak:
-            cmd += " && flatpak update -y"
-        if self._spices():
-            cmd += " && cinnamon-spice-updater --update-all"
-        svc_c = ("[Unit]\nDescription=System upgrade (%s)\n\n[Service]\nType=oneshot\n"
-                 "ExecStartPre=/bin/sleep 600\nExecStart=/usr/bin/bash -c \"%s\"\n"
-                 "User=root\n" % (desc, cmd))
-        tmr_c = ("[Unit]\nDescription=System upgrade timer (%s)\n\n[Timer]\n"
-                 "OnCalendar=%s\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n"
-                 % (desc, onc))
-        ex_svc = self.read_file(svc) or ""
-        ex_tmr = self.read_file(tmr) or ""
-        if exists and ex_svc == svc_c and ex_tmr == tmr_c:
-            self.log("Timer already configured: %s" % desc, "info")
-            if self.service_enabled("biweekly-upgrade.timer") != "enabled" and not self.dry_run:
-                self.sudo_run(["systemctl", "daemon-reload"], ignore_error=True)
-                self.sudo_run(["systemctl", "enable", "--now", "biweekly-upgrade.timer"],
-                              ignore_error=True)
-            return True
-        if self.dry_run:
-            self.log("[DRY RUN] create timer: %s" % desc, "warning"); return True
-        if self.service_enabled("mintupdate-automation-upgrade.timer") == "enabled":
-            self.log("Disabling mintupdate-automation-upgrade.timer", "info")
-        self.sudo_run(["systemctl", "disable", "--now",
-                       "mintupdate-automation-upgrade.timer"], ignore_error=True)
-        if not self.write_file(svc, svc_c, chmod="644"):
-            return False
-        if not self.write_file(tmr, tmr_c, chmod="644"):
-            return False
-        self.sudo_run(["systemctl", "daemon-reload"], ignore_error=True)
-        self.sudo_run(["systemctl", "enable", "--now", "biweekly-upgrade.timer"],
-                      ok_msg="✓ timer created: %s" % desc, err_msg="timer enable failed")
-        return True
-
     def _uuid_of(self, dev):
         try:
-            res = subprocess.run(["lsblk", "-no", "UUID", dev], capture_output=True,
-                                 text=True, timeout=5)
+            res = subprocess.run(["lsblk", "-no", "UUID", dev],
+                                 capture_output=True, text=True, timeout=5)
             return res.stdout.strip() if res.returncode == 0 else ""
         except Exception:
             return ""
@@ -1414,48 +1303,114 @@ class SystemOps:
             self.log("Cannot read /etc/fstab", "error"); return False
         dev = next((it["dev"] for it in parse_mounts() if it["mp"] == mp), None)
         uuid = self._uuid_of(dev) if dev else ""
-        lines = content.splitlines()
+        lines = lines_in(content)
         idx, parts = self._fstab_find(lines, mp, uuid)
         if idx is None:
-            self.log("%s not found in fstab — skipped" % mp, "warning"); return False
-        opts = parts[3].split(",")
-        target = ["noatime", "nodiratime"]
-        new_opts = opts + [o for o in target if o not in opts] if add else \
-            [o for o in opts if o not in target]
-        if new_opts == opts:
-            self.log("Already configured: %s" % mp, "info"); return True
-        parts[3] = ",".join(new_opts)
+            self.log("%s not found in fstab — skipped" % mp, "warning")
+            return False
+        opts = [o for o in parts[3].split(",") if not o.startswith("commit=")]
+        if add:
+            opts.append("noatime")
+        parts[3] = ",".join(opts)
         lines[idx] = "\t".join(parts)
         self.backup_file(path)
         if not self.write_file(path, "\n".join(lines) + "\n", backup=False):
             return False
         if add:
-            self.log("✓ fstab %s: +noatime,nodiratime (after reboot)" % mp, "success")
+            self.log("✓ fstab %s: +noatime (after reboot)" % mp, "success")
         else:
-            self.log("✓ fstab %s: options removed (after reboot)" % mp, "success")
+            self.log("✓ fstab %s: noatime removed (after reboot)" % mp, "success")
         return True
+
+    def _mount_commit_edit(self, mp, val, add=True):
+        path = "/etc/fstab"
+        content = self.read_file(path)
+        if not content:
+            self.log("Cannot read /etc/fstab", "error"); return False
+        dev = next((it["dev"] for it in parse_mounts() if it["mp"] == mp), None)
+        uuid = self._uuid_of(dev) if dev else ""
+        lines = lines_in(content)
+        idx, parts = self._fstab_find(lines, mp, uuid)
+        if idx is None:
+            return False
+        opts = [o for o in parts[3].split(",") if not o.startswith("commit=")]
+        if add:
+            opts.append("commit=%s" % val)
+        parts[3] = ",".join(opts)
+        lines[idx] = "\t".join(parts)
+        self.backup_file(path)
+        return self.write_file(path, "\n".join(lines) + "\n", backup=False)
 
     def apply_mount_opts(self, mps):
         if self.dry_run:
             for mp in mps:
-                self.log("[DRY RUN] fstab %s +noatime,nodiratime" % mp, "warning")
+                self.log("[DRY RUN] fstab %s +noatime" % mp, "warning")
             return True
+        ok = True
         for mp in mps:
-            self._mount_opts_edit(mp, True)
-        return True
+            ok = self._mount_opts_edit(mp, True) and ok
+        return ok
 
     def rollback_mount_opts(self, mps):
         if self.dry_run:
             for mp in mps:
-                self.log("[DRY RUN] fstab %s -noatime,nodiratime" % mp, "warning")
+                self.log("[DRY RUN] fstab %s -noatime" % mp, "warning")
             return True
+        ok = True
         for mp in mps:
-            self._mount_opts_edit(mp, False)
+            ok = self._mount_opts_edit(mp, False) and ok
+        return ok
+
+    def apply_commit(self, params=None):
+        params = params or {}
+        val = str(params.get("commit_value", "60")).strip() or "60"
+        if self.dry_run:
+            self.log("[DRY RUN] fstab commit=%s" % val, "warning"); return True
+        ok = True
+        for m in getattr(self, "mount_items", []):
+            for mp in m["mps"]:
+                ok = self._mount_commit_edit(mp, val, True) and ok
+        if ok:
+            self.log("✓ fstab commit=%s (after reboot)" % val, "success")
+        return ok
+
+    def rollback_commit(self, params=None):
+        if self.dry_run:
+            self.log("[DRY RUN] fstab remove commit", "warning"); return True
+        ok = True
+        for m in getattr(self, "mount_items", []):
+            for mp in m["mps"]:
+                ok = self._mount_commit_edit(mp, "", False) and ok
+        if ok:
+            self.log("✓ fstab commit removed (after reboot)", "success")
+        return ok
+
+    def _commit_applied(self):
+        try:
+            with open("/etc/fstab", "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+        except Exception:
+            return False
+        if not getattr(self, "mount_items", None):
+            return False
+        for m in self.mount_items:
+            found = False
+            for line in lines_in(content):
+                s = line.strip()
+                if not s or s.startswith("#"):
+                    continue
+                f2 = s.split()
+                if len(f2) >= 4 and f2[1] in m["mps"]:
+                    if any(o.startswith("commit=") for o in f2[3].split(",")):
+                        found = True
+                    break
+            if not found:
+                return False
         return True
 
     def apply_steam_links(self, libs):
-        src = os.path.join(self.state.user_home, ".steam", "steam", "steamapps",
-                           "compatdata")
+        src = os.path.join(self.state.user_home, ".steam", "steam",
+                           "steamapps", "compatdata")
         try:
             os.makedirs(src, exist_ok=True)
         except Exception as e:
@@ -1499,6 +1454,159 @@ class SystemOps:
                 self.log("Remove error %s: %s" % (dst, e), "error")
         return True
 
+    def apply_aliases(self, params=None):
+        bashrc = os.path.join(self.state.user_home, ".bashrc")
+        if self.dry_run:
+            self.log("[DRY RUN] add commands to .bashrc", "warning"); return True
+        if not self.path_exists(bashrc):
+            self.log(".bashrc not found: %s" % bashrc, "error"); return False
+        content = self.read_file(bashrc)
+        if content is None:
+            self.log("Cannot read .bashrc", "error"); return False
+        sm = "# >>> system-tuneup commands >>>"
+        em = "# <<< system-tuneup commands <<<"
+        without, skip = [], False
+        for line in lines_in(content):
+            if line.strip() == sm:
+                skip = True; continue
+            if line.strip() == em:
+                skip = False; continue
+            if not skip:
+                without.append(line)
+        names = ["upd", "upgr", "spices", "update_all", "inst", "remove", "search",
+                 "info", "clean", "space", "fix", "mem", "serv", "update_time"]
+        np_ = "|".join(names)
+        alias_rx = re.compile(r"^\s*alias\s+(" + np_ + r")=")
+        func_rx = re.compile(r"^\s*(" + np_ + r")\s*\(\)\s*\{")
+        cleaned, skip_fn = [], False
+        for line in without:
+            if alias_rx.match(line):
+                continue
+            if func_rx.match(line):
+                if "}" in line:
+                    continue
+                skip_fn = True; continue
+            if skip_fn:
+                if line.strip().startswith("}"):
+                    skip_fn = False
+                continue
+            if "system-tuneup" in line and line.strip().startswith("#"):
+                continue
+            cleaned.append(line)
+        spices, has_fp = self._spices(), self.state.has_flatpak
+        block = [sm, "# system-tuneup commands", ""]
+        block += ["upd() {", '    echo "APT update..."', "    sudo apt update", "}", ""]
+        block += ["upgr() {", '    echo "APT upgrade..."', "    sudo apt full-upgrade"]
+        if has_fp:
+            block.append('    echo "Flatpak update..."')
+            if spices:
+                block.append("    flatpak update && cinnamon-spice-updater --update-all")
+            else:
+                block.append("    flatpak update")
+        block += ["}", ""]
+        if spices:
+            block += ["spices() {", '    echo "Cinnamon spices update..."',
+                      "    cinnamon-spice-updater --update-all", "}", ""]
+        block += ["update_all() {", "    sudo apt update && sudo apt full-upgrade -y"]
+        if has_fp:
+            block.append("    flatpak update -y")
+        if spices:
+            block.append("    cinnamon-spice-updater --update-all")
+        block += ['    echo "Done."', "}", ""]
+        block += ["# Extra commands (system-tuneup)",
+                  'inst() { sudo apt install "$@"; }',
+                  'remove() { sudo apt purge --autoremove "$@"; }',
+                  'search() { apt search "$@"; }',
+                  'info() { apt show "$@"; }', ""]
+        block += ["clean() {", "    sudo apt autoremove -y && sudo apt autoclean && sudo apt clean", "}", ""]
+        block += ["space() {", "    df -h /", "}", ""]
+        block += ["fix() {", "    sudo apt --fix-broken install -y && sudo dpkg --configure -a", "}", ""]
+        block += ["mem() {", "    sync && sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches' && free -h", "}", ""]
+        block += ["serv() {", "    systemctl list-unit-files --type=service | less", "}", ""]
+        block += ["update_time() {",
+                  "    systemctl list-timers --no-pager 2>/dev/null | "
+                  'grep -E "NEXT|upgrade|update|apt" || echo "No timers"', "}", ""]
+        block.append(em)
+        while cleaned and cleaned[-1].strip() == "":
+            cleaned.pop()
+        new = "\n".join(cleaned + [""] + block) + "\n"
+        if new == content:
+            self.log("Commands already added", "info"); return True
+        self.backup_file(bashrc)
+        if not self.write_file(bashrc, new, backup=False):
+            return False
+        if self.state.user_name and self.state.user_name != "root":
+            self.sudo_run(["chown", "%s:%s" % (self.state.user_name, self.state.user_name),
+                           bashrc], ignore_error=True)
+        self.log("✓ commands added to .bashrc", "success"); return True
+
+    def apply_autoupdate(self, params=None):
+        params = params or {}
+        sched = params.get("update_schedule", "Отключено")
+        table = {
+            "Ежедневно": ("*-*-* 18:30:00", "daily 18:30"),
+            "Еженедельно (суббота)": ("Sat 18:30:00", "weekly Sat"),
+            "2 раза в месяц (1 и 15)": ("*-*-1,15 18:30:00", "1st & 15th"),
+            "Ежемесячно (1 число)": ("*-*-1 18:30:00", "monthly 1st"),
+            "Daily": ("*-*-* 18:30:00", "daily 18:30"),
+            "Weekly (Saturday)": ("Sat 18:30:00", "weekly Sat"),
+            "Twice a month (1 & 15)": ("*-*-1,15 18:30:00", "1st & 15th"),
+            "Monthly (1st)": ("*-*-1 18:30:00", "monthly 1st"),
+            "Disabled": (None, None), "Отключено": (None, None),
+        }
+        svc = "/etc/systemd/system/biweekly-upgrade.service"
+        tmr = "/etc/systemd/system/biweekly-upgrade.timer"
+        exists = self.path_exists(tmr) or self.path_exists(svc)
+        if sched in ("Отключено", "Disabled"):
+            if not exists:
+                self.log("Auto-update timer not found", "info"); return True
+            if self.dry_run:
+                self.log("[DRY RUN] remove timer", "warning"); return True
+            self.sudo_run(["systemctl", "disable", "--now", "biweekly-upgrade.timer"],
+                          ignore_error=True)
+            self.sudo_run(["rm", "-f", svc, tmr], ignore_error=True)
+            self.sudo_run(["systemctl", "daemon-reload"], ignore_error=True)
+            self.log("Auto-update timer removed", "success"); return True
+        if sched not in table:
+            self.log("Unknown schedule: %s" % sched, "error"); return False
+        onc, desc = table[sched]
+        spices = self._spices()
+        cmd = "apt update && apt full-upgrade -y"
+        if self.state.has_flatpak:
+            cmd += " && flatpak update -y"
+        if spices:
+            cmd += " && cinnamon-spice-updater --update-all"
+        svc_c = ("[Unit]\nDescription=System upgrade (%s)\n\n[Service]\nType=oneshot\n"
+                 "ExecStartPre=/bin/sleep 600\nExecStart=/usr/bin/bash -c \"%s\"\n"
+                 "User=root\n" % (desc, cmd))
+        tmr_c = ("[Unit]\nDescription=System upgrade timer (%s)\n\n[Timer]\n"
+                 "OnCalendar=%s\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n"
+                 % (desc, onc))
+        ex_svc = self.read_file(svc) or ""
+        ex_tmr = self.read_file(tmr) or ""
+        if exists and ex_svc == svc_c and ex_tmr == tmr_c:
+            self.log("Timer already configured: %s" % desc, "info")
+            if self.service_enabled("biweekly-upgrade.timer") != "enabled" and not self.dry_run:
+                self.sudo_run(["systemctl", "daemon-reload"], ignore_error=True)
+                self.sudo_run(["systemctl", "enable", "--now", "biweekly-upgrade.timer"],
+                              ignore_error=True)
+            return True
+        if self.dry_run:
+            self.log("[DRY RUN] create timer: %s" % desc, "warning"); return True
+        if self.service_enabled("mintupdate-automation-upgrade.timer") == "enabled":
+            self.log("Disabling mintupdate-automation-upgrade.timer", "info")
+        self.sudo_run(["systemctl", "disable", "--now",
+                       "mintupdate-automation-upgrade.timer"], ignore_error=True)
+        if not self.write_file(svc, svc_c, chmod="644"):
+            return False
+        if not self.write_file(tmr, tmr_c, chmod="644"):
+            return False
+        self.sudo_run(["systemctl", "daemon-reload"], ignore_error=True)
+        self.sudo_run(["systemctl", "enable", "--now", "biweekly-upgrade.timer"],
+                      ok_msg="✓ timer created: %s" % desc,
+                      err_msg="Cannot enable timer")
+        return True
+
     def _rm(self, path):
         if self.dry_run:
             self.log("[DRY RUN] rm %s" % path, "warning"); return True
@@ -1508,35 +1616,35 @@ class SystemOps:
 
     def _remove_line(self, path, pattern):
         if self.dry_run:
-            self.log("[DRY RUN] %s: remove %s" % (path, pattern), "warning"); return True
+            self.log("[DRY RUN] %s: remove %s" % (path, pattern), "warning")
+            return True
         content = self.read_file(path)
         if not content:
             self.log("File not found: %s" % path, "info"); return True
         rx = re.compile(pattern)
-        old = content.splitlines()
+        old = lines_in(content)
         new = [l for l in old if not rx.match(l.strip())]
         if len(new) == len(old):
             self.log("Line not found in %s" % path, "info"); return True
         self.backup_file(path)
         return self.write_file(path, "\n".join(new) + "\n", backup=False)
 
-    def _remove_grub(self, params):
+    def _remove_grub_params(self, params):
         if self.dry_run:
-            self.log("[DRY RUN] GRUB remove: " + " ".join(params), "warning"); return True
+            self.log("[DRY RUN] GRUB remove: " + " ".join(params), "warning")
+            return True
         path = "/etc/default/grub"
         content = self.read_file(path)
         if not content:
             self.log("GRUB not found", "warning"); return False
         new_lines, changed = [], False
-        for line in content.splitlines():
+        for line in lines_in(content):
             m = re.match(r"^\s*GRUB_CMDLINE_LINUX_DEFAULT=(.*)$", line)
             if m:
                 raw = m.group(1).strip().strip('"').strip("'")
-                parts = [p for p in raw.split() if p]
-                new_parts = [p for p in parts if p not in params]
-                if new_parts != parts:
-                    changed = True
-                new_lines.append('GRUB_CMDLINE_LINUX_DEFAULT="' + " ".join(new_parts) + '"')
+                parts = [p for p in raw.split() if p and p not in params]
+                new_lines.append('GRUB_CMDLINE_LINUX_DEFAULT="' + " ".join(parts) + '"')
+                changed = True
             else:
                 new_lines.append(line)
         if not changed:
@@ -1572,18 +1680,24 @@ class SystemOps:
         return True
 
     def rollback_audit(self, params=None):
-        return self._remove_grub(["audit=0"])
+        return self._remove_grub_params(["audit=0"])
 
     def rollback_raid(self, params=None):
-        return self._remove_grub(["raid=noautodetect"])
+        return self._remove_grub_params(["raid=noautodetect"])
 
-    def rollback_ppfeaturemask(self, params=None):
-        return self._remove_grub(["amdgpu.ppfeaturemask=0xffffffff"])
+    def rollback_nmi_watchdog(self, params=None):
+        return self._remove_grub_params(["nmi_watchdog=0"])
 
     def rollback_corectrl(self, params=None):
         self._rm("/etc/polkit-1/rules.d/90-corectrl.rules")
         self._rm("/etc/polkit-1/localauthority/50-local.d/90-corectrl.pkla")
         self.log("✓ CoreCtrl rule removed", "success"); return True
+
+    def rollback_ppfeaturemask(self, params=None):
+        return self._remove_grub_params(["amdgpu.ppfeaturemask=0xffffffff"])
+
+    def rollback_nvidia_modeset(self, params=None):
+        return self._remove_grub_params(["nvidia-drm.modeset=1"])
 
     def rollback_vrr(self, params=None):
         self._rm("/etc/X11/xorg.conf.d/20-amdgpu.conf")
@@ -1602,10 +1716,42 @@ class SystemOps:
                               "pipewire.conf.d", "10-sound.conf"))
         self.log("✓ PipeWire config removed", "success"); return True
 
+    def rollback_bbr(self, params=None):
+        self._rm("/etc/sysctl.d/99-bbr.conf")
+        self.sudo_run(["sysctl", "-w", "net.ipv4.tcp_congestion_control=cubic"],
+                      ignore_error=True)
+        return True
+
     def rollback_swap(self, params=None):
         self._rm("/etc/sysctl.d/99-gaming-swap.conf")
         self.sudo_run(["sysctl", "-w", "vm.swappiness=60"], ignore_error=True)
         self.log("✓ swappiness back to 60", "success"); return True
+
+    def rollback_zram(self, params=None):
+        self._rm("/etc/systemd/zram-generator.conf")
+        self.sudo_run(["systemctl", "daemon-reload"], ignore_error=True)
+        return True
+
+    def rollback_zswap(self, params=None):
+        return self._remove_grub_params(["zswap.enabled=1", "zswap.compressor=zstd",
+                                         "zswap.zpool=z3fold"])
+
+    def rollback_thp(self, params=None):
+        return self._remove_grub_params(["transparent_hugepage=always",
+                                         "transparent_hugepage=madvise",
+                                         "transparent_hugepage=never"])
+
+    def rollback_sysctl_cache(self, params=None):
+        return self._sysctl_del("vm.vfs_cache_pressure", "100")
+
+    def rollback_sysctl_numa(self, params=None):
+        return self._sysctl_del("kernel.numa_balancing", "1")
+
+    def rollback_reisub(self, params=None):
+        self._rm("/etc/sysctl.d/99-sysrq.conf")
+        self.sudo_run(["sysctl", "-w", "kernel.sysrq=176"], ignore_error=True)
+        self.log("✓ kernel.sysrq back to 176", "success")
+        return True
 
     def rollback_ntsync(self, params=None):
         self._rm("/etc/modules-load.d/ntsync.conf")
@@ -1633,14 +1779,14 @@ class SystemOps:
         sm = "# >>> system-tuneup commands >>>"
         em = "# <<< system-tuneup commands <<<"
         lines, skip = [], False
-        for line in content.splitlines():
+        for line in lines_in(content):
             if line.strip() == sm:
                 skip = True; continue
             if line.strip() == em:
                 skip = False; continue
             if not skip:
                 lines.append(line)
-        if len(lines) == len(content.splitlines()):
+        if len(lines) == len(lines_in(content)):
             self.log("Command block not found", "info"); return True
         self.backup_file(bashrc)
         if self.write_file(bashrc, "\n".join(lines) + "\n", backup=False):
@@ -1649,6 +1795,10 @@ class SystemOps:
 
     def rollback_autoupdate(self, params=None):
         return self.apply_autoupdate({"update_schedule": "Отключено"})
+
+
+def lines_in(content):
+    return content.splitlines()
 
 
 class Sig(QObject):
@@ -1829,6 +1979,7 @@ class MainWindow(QMainWindow):
         self.mount_state = {}
         self.steam_state = {}
         self._tasks = []
+        self._ram_cache = None
         self.sched_lbl = None
         self.sudo = SudoManager()
         self.sudo.prompt_password = self._ask_password
@@ -1840,6 +1991,8 @@ class MainWindow(QMainWindow):
         dg = self.state.user_name if self.state.user_name != "root" else "sudo"
         self.corectrl_group = dg
         self.swap_value = "150" if self.state.swap_type == "zram" else "10"
+        self.commit_value = "60"
+        self.thp_value = "madvise"
         self.schedule_value = self._schedule_values()[2]
         mounts, seen = [], set()
         for it in parse_mounts():
@@ -1861,8 +2014,12 @@ class MainWindow(QMainWindow):
             if self._lib_on_ntfs(lib):
                 self.steam_items.append(lib)
                 self.steam_state[lib] = False
-        scr = QApplication.primaryScreen().availableGeometry()
-        self.screen_w, self.screen_h = scr.width(), scr.height()
+        scr = QApplication.primaryScreen()
+        geo = scr.geometry()
+        self.screen_w, self.screen_h = geo.width(), geo.height()
+        self.refresh_rate = scr.refreshRate()
+        avail = scr.availableGeometry()
+        self.avail_w, self.avail_h = avail.width(), avail.height()
         self.sig.log.connect(self._on_log)
         self.sig.statusbar.connect(self._on_statusbar)
         self.sig.progress.connect(self._on_progress)
@@ -1891,6 +2048,14 @@ class MainWindow(QMainWindow):
     def colors(self):
         return THEMES[self.theme]
 
+    def _scaled(self, px):
+        return max(1, int(px))
+
+    def _host_env(self):
+        return {k: v for k, v in os.environ.items()
+                if k not in ("LD_LIBRARY_PATH", "LD_PRELOAD", "PYTHONPATH",
+                             "PYTHONHOME", "APPDIR", "APPIMAGE")}
+
     def _ask_password(self, attempt):
         text, ok = QInputDialog.getText(self, self.t("sudo_title"),
                                         self.t("sudo_prompt") % attempt,
@@ -1903,15 +2068,6 @@ class MainWindow(QMainWindow):
                     "2 раза в месяц (1 и 15)", "Ежемесячно (1 число)")
         return ("Disabled", "Daily", "Weekly (Saturday)",
                 "Twice a month (1 & 15)", "Monthly (1st)")
-
-    def _fstype_of(self, dev):
-        try:
-            res = subprocess.run(["lsblk", "-no", "FSTYPE", dev], capture_output=True,
-                                 text=True, timeout=5)
-            out = res.stdout.strip().splitlines()
-            return out[0] if out else ""
-        except Exception:
-            return ""
 
     def _lib_on_ntfs(self, lib):
         best, dev, fstype = "", "", ""
@@ -1926,10 +2082,20 @@ class MainWindow(QMainWindow):
             fstype = self._fstype_of(dev)
         return fstype in ("ntfs", "ntfs3", "fuseblk")
 
+    def _fstype_of(self, dev):
+        try:
+            res = subprocess.run(["lsblk", "-no", "FSTYPE", dev], capture_output=True,
+                                 text=True, timeout=5, env=self._host_env())
+            out = res.stdout.strip().splitlines()
+            return out[0] if out else ""
+        except Exception:
+            return ""
+
     def _gpu_driver(self):
         name = ""
         try:
-            res = subprocess.run(["lspci", "-k"], capture_output=True, text=True, timeout=5)
+            res = subprocess.run(["lspci", "-k"], capture_output=True, text=True,
+                                 timeout=5, env=self._host_env())
             lines = res.stdout.splitlines()
             for i, ln in enumerate(lines):
                 if "VGA compatible controller" in ln or "3D controller" in ln:
@@ -1955,7 +2121,8 @@ class MainWindow(QMainWindow):
         if not ver and name:
             try:
                 res = subprocess.run(["modinfo", "-F", "version", name],
-                                     capture_output=True, text=True, timeout=5)
+                                     capture_output=True, text=True,
+                                     timeout=5, env=self._host_env())
                 ver = res.stdout.strip()
             except Exception:
                 pass
@@ -1974,24 +2141,21 @@ class MainWindow(QMainWindow):
         for pkg in ("libglx-mesa0", "libgl1-mesa-dri", "libgl1-mesa-glx"):
             try:
                 res = subprocess.run(["dpkg-query", "-W", "-f=${Version}", pkg],
-                                     capture_output=True, text=True, timeout=5)
+                                     capture_output=True, text=True,
+                                     timeout=5, env=self._host_env())
                 if res.returncode == 0 and res.stdout.strip():
                     return res.stdout.strip()
             except Exception:
                 continue
-        try:
-            res = subprocess.run(["rpm", "-q", "--qf", "%{VERSION}", "mesa-libGL"],
-                                 capture_output=True, text=True, timeout=5)
-            if res.returncode == 0 and res.stdout.strip():
-                return res.stdout.strip()
-        except Exception:
-            pass
         return ""
 
     def _ram_details(self):
+        if self._ram_cache is not None:
+            return self._ram_cache
         try:
             res = subprocess.run(["sudo", "-n", "dmidecode", "-t", "17"],
-                                 capture_output=True, text=True, timeout=5)
+                                 capture_output=True, text=True,
+                                 timeout=5, env=self._host_env())
             if res.returncode != 0:
                 return ""
             typ, speed = "", ""
@@ -2007,7 +2171,8 @@ class MainWindow(QMainWindow):
                         speed = v.replace("MT/s", "MHz").strip()
                 if typ and speed:
                     break
-            return ", ".join([x for x in (typ, speed) if x])
+            self._ram_cache = ", ".join([x for x in (typ, speed) if x])
+            return self._ram_cache
         except Exception:
             return ""
 
@@ -2020,38 +2185,12 @@ class MainWindow(QMainWindow):
         except Exception:
             return None
 
-    def _swap_size_gb(self):
-        try:
-            with open("/proc/meminfo", "r", encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    if line.startswith("SwapTotal:"):
-                        return int(line.split()[1]) / 1024.0 / 1024.0
-        except Exception:
-            pass
-        return None
-
-    def _fmt_state(self, value):
-        mapping = {
-            "enabled": self.t("st_enabled"),
-            "disabled": self.t("st_disabled"),
-            "masked": self.t("st_masked"),
-            "not-found": self.t("st_notfound"),
-            "active": self.t("run_yes"),
-            "inactive": self.t("run_no"),
-        }
-        return mapping.get(value, value)
-
     def _spawn_task(self, fn):
         self._tasks = [t for t in self._tasks if t.isRunning()]
         t = Task(fn)
         self._tasks.append(t)
         t.start()
         return t
-
-    def _host_env(self):
-        return {k: v for k, v in os.environ.items()
-                if k not in ("LD_LIBRARY_PATH", "LD_PRELOAD", "PYTHONPATH",
-                             "PYTHONHOME", "APPDIR", "APPIMAGE")}
 
     def log(self, msg, tag="normal"):
         self.sig.log.emit(msg, tag)
@@ -2134,7 +2273,7 @@ class MainWindow(QMainWindow):
         self.theme_btn.setText(self.t("theme_dark") if self.theme == "light"
                                else self.t("theme_light"))
         self.apply_hardware_restrictions()
-        self.resize(min(1080, self.screen_w - 40), min(820, self.screen_h - 40))
+        self.resize(min(1080, self.avail_w - 40), min(820, self.avail_h - 40))
 
     def _build_tune(self, c):
         tab = QWidget()
@@ -2154,9 +2293,11 @@ class MainWindow(QMainWindow):
         rb.clicked.connect(self.rollback_selected)
         bar.addWidget(rb)
         sa = QPushButton(self.t("btn_selall"))
+        sa.setIcon(QIcon(make_icon("selall", 30, c["blue"])))
         sa.clicked.connect(self.select_all_options)
         bar.addWidget(sa)
         sn = QPushButton(self.t("btn_selnone"))
+        sn.setIcon(QIcon(make_icon("selnone", 30, c["gray"])))
         sn.clicked.connect(self.reset_options)
         bar.addWidget(sn)
         bar.addStretch(1)
@@ -2215,6 +2356,19 @@ class MainWindow(QMainWindow):
             le.setFixedWidth(60)
             le.textChanged.connect(lambda v: setattr(self, "swap_value", v))
             top.addWidget(le)
+        elif key == "commit":
+            top.addWidget(QLabel(self.t("lbl_value")))
+            le = QLineEdit(self.commit_value)
+            le.setFixedWidth(60)
+            le.textChanged.connect(lambda v: setattr(self, "commit_value", v))
+            top.addWidget(le)
+        elif key == "thp":
+            top.addWidget(QLabel(self.t("lbl_value")))
+            combo = QComboBox()
+            combo.addItems(["always", "madvise", "never"])
+            combo.setCurrentText(self.thp_value)
+            combo.currentTextChanged.connect(lambda v: setattr(self, "thp_value", v))
+            top.addWidget(combo)
         elif key == "autoupdate":
             top.addWidget(QLabel(self.t("lbl_schedule")))
             combo = QComboBox()
@@ -2253,9 +2407,22 @@ class MainWindow(QMainWindow):
             sep.setFrameShape(QFrame.Shape.HLine)
             sep.setStyleSheet("color: %s;" % c["border"])
             vl.addWidget(sep)
+            hh = QHBoxLayout()
             h = QLabel("─── %s ───" % self.t("mount_title"))
             h.setStyleSheet("color: %s; font-weight: bold; font-size: 13px;" % c["yellow"])
-            vl.addWidget(h)
+            hh.addWidget(h)
+            fb = QPushButton(self.t("btn_file"))
+            fb.setIcon(QIcon(make_icon("file", 30, c["blue"])))
+            fb.setFixedHeight(24)
+            fb.clicked.connect(lambda _c: self._open_path("/etc/fstab"))
+            hh.addWidget(fb)
+            qb = QPushButton(self.t("btn_q"))
+            qb.setObjectName("qbtn")
+            qb.setFixedSize(26, 26)
+            qb.clicked.connect(lambda _c: self._show_option_help("mount"))
+            hh.addWidget(qb)
+            hh.addStretch(1)
+            vl.addLayout(hh)
             d = QLabel(self.t("mount_desc"))
             d.setWordWrap(True)
             d.setStyleSheet("color: %s; font-size: 12px;" % c["gray"])
@@ -2272,11 +2439,6 @@ class MainWindow(QMainWindow):
                 badge = QLabel("…")
                 hl.addWidget(badge)
                 self.mount_badges[m["mps"][0]] = badge
-                qb = QPushButton(self.t("btn_q"))
-                qb.setObjectName("qbtn")
-                qb.setFixedSize(26, 26)
-                qb.clicked.connect(lambda _c: self._show_option_help("mount"))
-                hl.addWidget(qb)
                 hl.addStretch(1)
                 vl.addWidget(row)
         if self.steam_items:
@@ -2285,9 +2447,17 @@ class MainWindow(QMainWindow):
             sep.setFrameShape(QFrame.Shape.HLine)
             sep.setStyleSheet("color: %s;" % c["border"])
             vl.addWidget(sep)
+            hh = QHBoxLayout()
             h = QLabel("─── %s ───" % self.t("steam_title"))
             h.setStyleSheet("color: %s; font-weight: bold; font-size: 13px;" % c["yellow"])
-            vl.addWidget(h)
+            hh.addWidget(h)
+            qb = QPushButton(self.t("btn_q"))
+            qb.setObjectName("qbtn")
+            qb.setFixedSize(26, 26)
+            qb.clicked.connect(lambda _c: self._show_option_help("steam"))
+            hh.addWidget(qb)
+            hh.addStretch(1)
+            vl.addLayout(hh)
             d = QLabel(self.t("steam_desc"))
             d.setWordWrap(True)
             d.setStyleSheet("color: %s; font-size: 12px;" % c["gray"])
@@ -2304,11 +2474,6 @@ class MainWindow(QMainWindow):
                 badge = QLabel("…")
                 hl.addWidget(badge)
                 self.steam_badges[lib] = badge
-                qb = QPushButton(self.t("btn_q"))
-                qb.setObjectName("qbtn")
-                qb.setFixedSize(26, 26)
-                qb.clicked.connect(lambda _c: self._show_option_help("steam"))
-                hl.addWidget(qb)
                 hl.addStretch(1)
                 vl.addWidget(row)
 
@@ -2320,11 +2485,12 @@ class MainWindow(QMainWindow):
         lay.setContentsMargins(8, 8, 8, 8)
         btns = QHBoxLayout()
         btns.setSpacing(8)
-        for txt, fn in ((self.t("btn_selall"), self.select_all_services),
-                        (self.t("btn_selnone"), self.clear_services_selection),
-                        (self.t("svc_off_sel"), self.disable_selected),
-                        (self.t("svc_on_sel"), self.enable_selected)):
+        for txt, fn, ik, ic in ((self.t("btn_selall"), self.select_all_services, "selall", c["blue"]),
+                                (self.t("btn_selnone"), self.clear_services_selection, "selnone", c["gray"]),
+                                (self.t("svc_off_sel"), self.disable_selected, "off", c["orange"]),
+                                (self.t("svc_on_sel"), self.enable_selected, "on", c["green"])):
             b = QPushButton(txt)
+            b.setIcon(QIcon(make_icon(ik, 30, ic)))
             b.clicked.connect(fn)
             btns.addWidget(b)
         btns.addStretch(1)
@@ -2394,33 +2560,6 @@ class MainWindow(QMainWindow):
         if cur.hasSelection():
             QApplication.clipboard().setText(cur.selectedText())
 
-    def _open_info_dialog(self, title, html):
-        c = self.colors()
-        dlg = QDialog(self)
-        dlg.setObjectName("infodlg")
-        dlg.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
-        dlg.resize(min(720, self.screen_w - 60), min(560, self.screen_h - 80))
-        vl = QVBoxLayout(dlg)
-        vl.setContentsMargins(14, 14, 14, 14)
-        hd = QHBoxLayout()
-        tl = QLabel(title)
-        tl.setStyleSheet("font-size: 16px; font-weight: bold; color: %s;" % c["accent"])
-        hd.addWidget(tl)
-        hd.addStretch(1)
-        cb = QPushButton("×")
-        cb.setFixedSize(28, 28)
-        cb.setStyleSheet("font-size: 18px; font-weight: bold;")
-        cb.clicked.connect(dlg.close)
-        hd.addWidget(cb)
-        vl.addLayout(hd)
-        te = QTextEdit()
-        te.setReadOnly(True)
-        te.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        te.customContextMenuRequested.connect(lambda p: self._menu_for(te, p))
-        te.setHtml(html)
-        vl.addWidget(te)
-        dlg.show()
-
     def _show_option_help(self, key):
         txt = OPTIONS_HELP.get(key, {}).get(self.lang, "")
         if not txt:
@@ -2435,23 +2574,102 @@ class MainWindow(QMainWindow):
             return
         self._open_info_dialog(name, "<p style='font-size:14px;'>%s</p>" % txt)
 
+    def _open_info_dialog(self, title, html):
+        c = self.colors()
+        dlg = QDialog(self)
+        dlg.setObjectName("infodlg")
+        dlg.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        dlg.resize(min(720, self.screen_w - 60), min(560, self.screen_h - 80))
+        vl = QVBoxLayout(dlg)
+        vl.setContentsMargins(14, 14, 14, 14)
+        hd = QHBoxLayout()
+        tl = QLabel(title)
+        tl.setStyleSheet("font-size: 16px; font-weight: bold; color: %s;" % c["accent"])
+        hd.addWidget(tl)
+        hd.addStretch(1)
+        cb = QPushButton()
+        cb.setIcon(QIcon(make_icon("close", 22, c["red"])))
+        cb.setFixedSize(28, 28)
+        cb.clicked.connect(dlg.close)
+        hd.addWidget(cb)
+        vl.addLayout(hd)
+        te = QTextEdit()
+        te.setReadOnly(True)
+        te.setOpenExternalLinks(True)
+        te.setHtml(html)
+        vl.addWidget(te)
+        dlg.show()
+
     def show_about(self):
         c = self.colors()
+        dlg = QDialog(self)
+        dlg.setObjectName("infodlg")
+        dlg.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        dlg.resize(min(640, self.screen_w - 60), min(420, self.screen_h - 80))
+        vl = QVBoxLayout(dlg)
+        vl.setContentsMargins(18, 18, 18, 18)
+        hd = QHBoxLayout()
+        tl = QLabel(self.t("about_title"))
+        tl.setStyleSheet("font-size: 18px; font-weight: bold; color: %s;" % c["accent"])
+        hd.addWidget(tl)
+        hd.addStretch(1)
+        cb = QPushButton()
+        cb.setIcon(QIcon(make_icon("close", 22, c["red"])))
+        cb.setFixedSize(28, 28)
+        cb.clicked.connect(dlg.close)
+        hd.addWidget(cb)
+        vl.addLayout(hd)
+        te = QTextEdit()
+        te.setReadOnly(True)
+        te.setOpenExternalLinks(True)
         html = ('<div style="font-family: monospace;">'
                 '<h2 style="color:%s;">%s v%s</h2>'
-                '<p><b>%s:</b> %s</p>'
                 '<p>%s</p>'
-                '<hr>'
-                '<p style="color:%s; font-size:15px;"><b>%s:</b> %s</p>'
-                '<hr><pre style="color:%s; font-size:13px;">%s</pre></div>'
+                '<p><b>%s:</b> %s</p>'
+                '<p><b>%s:</b> %s</p>'
+                '<p><a href="%s">%s</a></p></div>'
                 % (c["accent"], APP_NAME, APP_VERSION,
-                   self.t("about_ver"), APP_VERSION,
                    self.t("about_purpose"),
-                   c["yellow"], self.t("about_author"), self.t("about_author_name"),
-                   c["fg"], self.t("help_body").replace("&", "&amp;")
-                                                .replace("<", "&lt;")
-                                                .replace(">", "&gt;")))
-        self._open_info_dialog(self.t("about_title"), html)
+                   self.t("about_author"), self.t("about_author_name"),
+                   self.t("about_ver"), APP_VERSION,
+                   GITHUB_URL, GITHUB_URL))
+        te.setHtml(html)
+        vl.addWidget(te)
+        dlg.show()
+
+    def _open_path(self, path):
+        ops = SystemOps(self.sudo, self.state, lambda m, t: None, True)
+        content = ops.read_file(path) or ""
+        self._show_viewer(path, content)
+
+    def _show_viewer(self, path, content):
+        dlg = QDialog(self)
+        dlg.setWindowTitle("%s: %s" % (self.t("viewer"), path))
+        dlg.resize(min(760, self.screen_w - 40), min(520, self.screen_h - 60))
+        vl = QVBoxLayout(dlg)
+        te = QTextEdit()
+        te.setReadOnly(True)
+        te.setPlainText(content)
+        te.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        te.customContextMenuRequested.connect(lambda p: self._menu_for(te, p))
+        vl.addWidget(te)
+        b = QPushButton(self.t("viewer_ext"))
+        b.clicked.connect(lambda: self._open_ext(path))
+        vl.addWidget(b, 0, Qt.AlignmentFlag.AlignLeft)
+        dlg.exec()
+
+    def _open_ext(self, path):
+        for cmd in (["xed", path], ["mousepad", path], ["gedit", path],
+                    ["kate", path], ["pluma", path],
+                    ["xdg-open", path], ["gio", "open", path]):
+            try:
+                subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL,
+                                 start_new_session=True, env=self._host_env())
+                return
+            except Exception:
+                continue
+        self.log("Cannot open external editor for %s" % path, "error")
 
     def open_option_file(self, key):
         cands = [p.format(home=self.state.user_home) for p in OPTION_FILES.get(key, [])]
@@ -2473,35 +2691,6 @@ class MainWindow(QMainWindow):
         ops = SystemOps(self.sudo, self.state, lambda m, t: None, True)
         content = ops.read_file(target) or ""
         self._show_viewer(target, content)
-
-    def _open_ext(self, path):
-        for cmd in (["xed", path], ["mousepad", path], ["gedit", path],
-                    ["kate", path], ["pluma", path],
-                    ["xdg-open", path], ["gio", "open", path]):
-            try:
-                subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
-                                 stderr=subprocess.DEVNULL,
-                                 start_new_session=True, env=self._host_env())
-                return
-            except Exception:
-                continue
-        self.log("Cannot open external editor for %s" % path, "error")
-
-    def _show_viewer(self, path, content):
-        dlg = QDialog(self)
-        dlg.setWindowTitle("%s: %s" % (self.t("viewer"), path))
-        dlg.resize(min(760, self.screen_w - 40), min(520, self.screen_h - 60))
-        vl = QVBoxLayout(dlg)
-        te = QTextEdit()
-        te.setReadOnly(True)
-        te.setPlainText(content)
-        te.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        te.customContextMenuRequested.connect(lambda p: self._menu_for(te, p))
-        vl.addWidget(te)
-        b = QPushButton(self.t("viewer_ext"))
-        b.clicked.connect(lambda: self._open_ext(path))
-        vl.addWidget(b, 0, Qt.AlignmentFlag.AlignLeft)
-        dlg.exec()
 
     def select_all_options(self):
         for k in self.opts_state:
@@ -2557,7 +2746,9 @@ class MainWindow(QMainWindow):
             return
         params = {"corectrl_group": self.corectrl_group,
                   "swap_value": self.swap_value,
-                  "update_schedule": self.schedule_value}
+                  "update_schedule": self.schedule_value,
+                  "commit_value": self.commit_value,
+                  "thp_value": self.thp_value}
         dry = self.dry_check.isChecked()
         if ("autoupdate" in selected and not dry and
                 params["update_schedule"] not in ("Отключено", "Disabled")):
@@ -2576,9 +2767,8 @@ class MainWindow(QMainWindow):
 
     def _apply_work(self, selected, mount_sel, steam_sel, params, dry):
         ops = SystemOps(self.sudo, self.state, self.log, dry)
+        ops.mount_items = self.mount_items
         total = len(selected) + (1 if mount_sel else 0) + (1 if steam_sel else 0)
-        if total == 0:
-            return
         done = 0
         self.log("=" * 60, "highlight")
         self.log("APPLY START" if self.lang == "en" else "ЗАПУСК ТЮНИНГА", "highlight")
@@ -2641,9 +2831,8 @@ class MainWindow(QMainWindow):
 
     def _rollback_work(self, selected, mount_sel, steam_sel, dry):
         ops = SystemOps(self.sudo, self.state, self.log, dry)
+        ops.mount_items = self.mount_items
         total = len(selected) + (1 if mount_sel else 0) + (1 if steam_sel else 0)
-        if total == 0:
-            return
         done = 0
         self.log("=" * 60, "highlight")
         self.log("ROLLBACK START" if self.lang == "en" else "ЗАПУСК ОТКАТА", "highlight")
@@ -2694,16 +2883,16 @@ class MainWindow(QMainWindow):
 
     def _enable_work(self, names):
         ops = SystemOps(self.sudo, self.state, self.log, self.dry_check.isChecked())
-        for n in names:
+        for name in names:
             if ops.dry_run:
-                ops.log("[DRY RUN] enable %s" % n, "warning")
+                ops.log("[DRY RUN] enable %s" % name, "warning")
                 continue
-            ok = ops.sudo_run(["systemctl", "unmask", n], ignore_error=True)
-            ok2 = ops.sudo_run(["systemctl", "enable", n], ignore_error=True)
+            ok = ops.sudo_run(["systemctl", "unmask", name], ignore_error=True)
+            ok2 = ops.sudo_run(["systemctl", "enable", name], ignore_error=True)
             if ok or ok2:
-                ops.log("✓ %s enabled" % n, "success")
+                ops.log("✓ %s enabled" % name, "success")
             else:
-                ops.log("Cannot enable %s" % n, "warning")
+                ops.log("Cannot enable %s" % name, "warning")
         self.sig.spawn.emit(self._services_work)
 
     def disable_selected(self):
@@ -2722,21 +2911,22 @@ class MainWindow(QMainWindow):
 
     def _disable_work(self, names):
         ops = SystemOps(self.sudo, self.state, self.log, self.dry_check.isChecked())
-        for n in names:
+        for name in names:
             if ops.dry_run:
-                ops.log("[DRY RUN] disable %s" % n, "warning")
+                ops.log("[DRY RUN] disable %s" % name, "warning")
                 continue
-            ok = ops.sudo_run(["systemctl", "disable", "--now", n], ignore_error=True)
-            if n.startswith("avahi"):
-                ok = ops.sudo_run(["systemctl", "mask", n], ignore_error=True) or ok
+            ok = ops.sudo_run(["systemctl", "disable", "--now", name], ignore_error=True)
+            if name.startswith("avahi"):
+                ok = ops.sudo_run(["systemctl", "mask", name], ignore_error=True) or ok
             if ok:
-                ops.log("✓ %s disabled" % n, "success")
+                ops.log("✓ %s disabled" % name, "success")
             else:
-                ops.log("Cannot disable %s" % n, "warning")
+                ops.log("Cannot disable %s" % name, "warning")
         self.sig.spawn.emit(self._services_work)
 
     def _applied_work(self):
         ops = SystemOps(self.sudo, self.state, lambda m, t: None, True)
+        ops.mount_items = self.mount_items
         self.sig.applied.emit(self._detect_applied(ops))
         self.sig.mount_applied.emit(self._detect_mount())
         self.sig.steam_applied.emit(self._detect_steam())
@@ -2819,19 +3009,29 @@ class MainWindow(QMainWindow):
             "journald": bool(re.search(r"^\s*Storage\s*=\s*volatile\s*$", j, re.M)),
             "audit": "audit=0" in grub,
             "raid": "raid=noautodetect" in grub,
+            "nmi_watchdog": "nmi_watchdog=0" in grub,
             "corectrl": self._corectrl_found(ops),
             "ppfeaturemask": "amdgpu.ppfeaturemask" in grub,
+            "nvidia_modeset": "nvidia-drm.modeset=1" in grub,
             "vrr": ops.path_exists("/etc/X11/xorg.conf.d/20-amdgpu.conf"),
             "radv": "RADV_PERFTEST=sam" in env,
-            "pipewire": ops.path_exists(pw),
             "mesa": "MESA_SHADER_CACHE_MAX_SIZE=4G" in env,
+            "pipewire": ops.path_exists(pw),
+            "bbr": sv("net.ipv4.tcp_congestion_control") == "bbr"
+                     or ops.path_exists("/etc/sysctl.d/99-bbr.conf"),
             "swap": (m_sw and m_sw.group(1) in ("10", "150")) or cur in ("10", "150"),
+            "zram": ops.path_exists("/etc/systemd/zram-generator.conf"),
+            "zswap": "zswap.enabled=1" in grub,
+            "thp": bool(re.search(r"transparent_hugepage=\w+", grub)),
             "sysctl_cache": bool(re.search(r"^vm\.vfs_cache_pressure=50$", sysc, re.M))
                             or sv("vm.vfs_cache_pressure") == "50",
             "sysctl_numa": bool(re.search(r"^kernel\.numa_balancing=0$", sysc, re.M))
                            or sv("kernel.numa_balancing") == "0",
+            "reisub": sv("kernel.sysrq") == "244"
+                        or ops.path_exists("/etc/sysctl.d/99-sysrq.conf"),
             "ntsync": self.state.ntsync or ops.path_exists("/etc/modules-load.d/ntsync.conf"),
             "ntfs3": bool(re.search(r"^\s*#\s*blacklist\s+ntfs3\s*$", mint, re.M)),
+            "commit": ops._commit_applied(),
             "aliases": "system-tuneup" in bashrc,
             "autoupdate": ops.service_enabled("biweekly-upgrade.timer") == "enabled",
         }
@@ -2847,14 +3047,14 @@ class MainWindow(QMainWindow):
             oks = []
             for mp in m["mps"]:
                 ok = False
-                for line in content.splitlines():
+                for line in lines_in(content):
                     s = line.strip()
                     if not s or s.startswith("#"):
                         continue
-                    f = s.split()
-                    if len(f) >= 4 and f[1] == mp:
-                        opts = f[3].split(",")
-                        ok = "noatime" in opts and "nodiratime" in opts
+                    f2 = s.split()
+                    if len(f2) >= 4 and f2[1] == mp:
+                        opts = f2[3].split(",")
+                        ok = "noatime" in opts
                         break
                 oks.append(ok)
             res[m["mps"][0]] = all(oks)
@@ -2890,6 +3090,7 @@ class MainWindow(QMainWindow):
         fallback = dict(self.applied)
         try:
             ops = SystemOps(self.sudo, self.state, lambda m, t: None, True)
+            ops.mount_items = self.mount_items
             try:
                 A = self._detect_applied(ops)
                 self.sig.applied.emit(A)
@@ -2904,13 +3105,29 @@ class MainWindow(QMainWindow):
                 except Exception:
                     return "n/a"
             vals = {p: sv(p) for p in ("vm.swappiness", "vm.vfs_cache_pressure",
-                                      "kernel.numa_balancing")}
+                                      "kernel.numa_balancing",
+                                      "net.ipv4.tcp_congestion_control")}
             c = self.colors()
 
             def col(k):
                 return c[k]
+
+            def esc(s):
+                return (str(s).replace("&", "&amp;").replace("<", "&lt;")
+                        .replace(">", "&gt;"))
+
+            def table(title, headers, rows_html):
+                h = "<table border='1' cellspacing='0' cellpadding='4' width='100%'>"
+                h += "<tr><th colspan='%d' style='background:%s; color:%s; text-align:left;'>%s</th></tr>" % (
+                    len(headers), col("tab"), col("fg"), esc(title))
+                h += "<tr>" + "".join(
+                    "<td style='background:%s; color:%s;'><b>%s</b></td>" % (
+                        col("panel"), col("gray"), esc(x)) for x in headers) + "</tr>"
+                h += "".join(rows_html)
+                h += "</table><br>"
+                return h
+
             P = []
-            P.append("<h3 style='color:%s;'>%s</h3>" % (col("blue"), self.t("st_hw")))
             name = ""
             try:
                 with open("/etc/os-release", "r", encoding="utf-8", errors="replace") as f:
@@ -2921,82 +3138,102 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
             bits = 64 if sys.maxsize > 2 ** 32 else 32
-            P.append("%s: %s (%d-bit)" % (self.t("os_lbl"), name or "Linux", bits))
-            P.append("%s: %s" % (self.t("cpu_lbl"), cpu_model()))
             gpu = self.state.gpu
             if self.state.gpu_model:
                 gpu += " " + self.state.gpu_model
-            P.append("%s: %s" % (self.t("gpu_lbl"), gpu))
             drv, drv_ver = self._gpu_driver()
             mesa = self._mesa_version() if drv != "nvidia" else ""
+            drv_s = ""
             if drv or mesa:
-                parts = []
+                pp = []
                 if drv:
-                    parts.append(drv + ((" " + drv_ver) if drv_ver else ""))
+                    pp.append(drv + ((" " + drv_ver) if drv_ver else ""))
                 if mesa:
-                    parts.append("Mesa %s" % mesa)
-                P.append("%s: %s" % (self.t("driver_lbl"), ", ".join(parts)))
-            P.append("%s: %dx%d" % (self.t("screen_lbl"), self.screen_w, self.screen_h))
+                    pp.append("Mesa %s" % mesa)
+                drv_s = ", ".join(pp)
             ram = ram_total_gb()
+            ram_s = ""
             if ram is not None:
                 extra = self._ram_details()
-                rs = "%.1f %s" % (ram, self.t("gb"))
+                ram_s = "%.1f %s" % (ram, self.t("gb"))
                 if extra:
-                    rs += ", %s" % extra
-                P.append("%s: %s" % (self.t("ram_lbl"), rs))
+                    ram_s += ", %s" % extra
+                else:
+                    ram_s += " " + self.t("ram_hint")
+            if self.state.has_swap:
+                tn = {"file": self.t("swap_file"), "partition": self.t("swap_part"),
+                      "zram": "zram"}
+                sw_s = tn.get(self.state.swap_type, self.state.swap_type)
+                sz = self._swap_size_gb()
+                if sz:
+                    sw_s += ", %.1f %s" % (sz, self.t("gb"))
+            else:
+                sw_s = self.t("no_swap")
+            rate = self.refresh_rate
+            scr_s = "%dx%d" % (self.screen_w, self.screen_h)
+            if rate and rate > 0:
+                scr_s += ", %.0f %s" % (rate, self.t("hz"))
+            hw = [(self.t("os_lbl"), "%s (%d-bit)" % (name or "Linux", bits)),
+                  (self.t("cpu_lbl"), cpu_model()),
+                  (self.t("gpu_lbl"), gpu),
+                  (self.t("driver_lbl"), drv_s or "n/a"),
+                  (self.t("screen_lbl"), scr_s),
+                  (self.t("ram_lbl"), ram_s),
+                  (self.t("swap_lbl"), sw_s),
+                  (self.t("kernel_lbl"), os.uname().release),
+                  (self.t("de_lbl"), desktop_name()),
+                  ("RAID", self.t("w_yes") if self.state.has_raid else self.t("w_no")),
+                  ("ntsync", self.t("w_yes") if self.state.ntsync else self.t("w_no")),
+                  (self.t("user_lbl"), self.state.user_name),
+                  (self.t("home_lbl"), self.state.user_home)]
+            hw_rows = ["<tr><td style='color:%s;'><b>%s</b></td><td style='color:%s;'>%s</td></tr>" % (
+                col("gray"), esc(k), col("fg"), esc(v)) for k, v in hw]
+            P.append(table(self.t("st_hw"), [self.t("st_hw"), ""], hw_rows))
             seen = {}
             for it in parse_mounts():
                 if it["mp"] == "/boot/efi" or (it["fstype"] == "vfat"
                                                and it["mp"].startswith("/boot")):
                     continue
-                seen.setdefault(it["dev"], []).append(it["mp"])
-            for dev, mps in seen.items():
-                info = self._disk_info(mps[0])
-                if not info:
+                seen.setdefault(it["dev"], {"mps": [], "fstype": it["fstype"]})
+                seen[it["dev"]]["mps"].append(it["mp"])
+            part_rows = []
+            for dev, info in seen.items():
+                d = self._disk_info(info["mps"][0])
+                if not d:
                     continue
-                total, free = info
-                P.append("%s %s (%s): %.1f %s, %s %.1f %s"
-                         % (self.t("disk_lbl"), ", ".join(mps), os.path.basename(dev),
-                            total, self.t("gb"), self.t("free_w"), free, self.t("gb")))
-            if self.state.has_swap:
-                tn = {"file": self.t("swap_file"), "partition": self.t("swap_part"),
-                      "zram": "zram"}
-                sv_ = tn.get(self.state.swap_type, self.state.swap_type)
-                sz = self._swap_size_gb()
-                if sz:
-                    sv_ += ", %.1f %s" % (sz, self.t("gb"))
-            else:
-                sv_ = self.t("no_swap")
-            P.append("%s: %s" % (self.t("swap_lbl"), sv_))
-            P.append("%s: %s" % (self.t("kernel_lbl"), os.uname().release))
-            P.append("%s: %s" % (self.t("de_lbl"), desktop_name()))
-            P.append("RAID: %s" % (self.t("w_yes") if self.state.has_raid
-                                   else self.t("w_no")))
-            P.append("ntsync: %s" % (self.t("w_yes") if self.state.ntsync
-                                     else self.t("w_no")))
-            P.append("%s: %s<br>%s: %s" % (self.t("user_lbl"), self.state.user_name,
-                                            self.t("home_lbl"), self.state.user_home))
-            P.append("<h3 style='color:%s;'>%s</h3>" % (col("blue"), self.t("st_tweaks")))
+                total, free = d
+                part_rows.append("<tr><td style='color:%s;'><b>%s</b> (%s)</td><td style='color:%s;'>%s</td><td style='color:%s;'>%.1f %s</td><td style='color:%s;'>%.1f %s</td></tr>" % (
+                    col("fg"), esc(", ".join(info["mps"])), esc(os.path.basename(dev)),
+                    col("gray"), esc(info["fstype"]),
+                    col("fg"), total, self.t("gb"),
+                    col("fg"), free, self.t("gb")))
+            P.append(table(self.t("st_parts"),
+                           [self.t("part_mount"), self.t("part_fs"),
+                            self.t("part_total"), self.t("part_free")], part_rows))
+            tw_rows = []
             for k in OPTIONS_META:
                 label, _d, _c, short = self.om(k)
                 ok = A.get(k, False)
-                mark = self.t("yes") if ok else self.t("no")
                 cc = col("green") if ok else col("red")
-                P.append("<span style='color:%s;'><b>%s</b></span> %s — %s"
-                         % (cc, mark, label, short))
+                tw_rows.append("<tr><td style='color:%s;'><b>%s</b></td><td style='color:%s;'><b>%s</b></td><td style='color:%s;'>%s</td></tr>" % (
+                    col("fg"), esc(label), cc, self.t("yes") if ok else self.t("no"),
+                    col("gray"), esc(short)))
             for m in self.mount_items:
                 ok = self.mount_applied.get(m["mps"][0], False)
                 cc = col("green") if ok else col("red")
-                P.append("<span style='color:%s;'><b>%s</b></span> %s — %s"
-                         % (cc, self.t("yes") if ok else self.t("no"),
-                            self.t("mount_short"), ", ".join(m["mps"])))
+                tw_rows.append("<tr><td style='color:%s;'><b>%s</b></td><td style='color:%s;'><b>%s</b></td><td style='color:%s;'>%s</td></tr>" % (
+                    col("fg"), esc(self.t("mount_short")), cc,
+                    self.t("yes") if ok else self.t("no"), col("gray"),
+                    esc(", ".join(m["mps"]))))
             for lib in self.steam_items:
                 ok = self.steam_applied.get(lib, False)
                 cc = col("green") if ok else col("red")
-                P.append("<span style='color:%s;'><b>%s</b></span> %s — %s"
-                         % (cc, self.t("yes") if ok else self.t("no"),
-                            self.t("steam_short"), lib))
-            P.append("<h3 style='color:%s;'>%s</h3>" % (col("blue"), self.t("st_services")))
+                tw_rows.append("<tr><td style='color:%s;'><b>%s</b></td><td style='color:%s;'><b>%s</b></td><td style='color:%s;'>%s</td></tr>" % (
+                    col("fg"), esc(self.t("steam_short")), cc,
+                    self.t("yes") if ok else self.t("no"), col("gray"), esc(lib)))
+            P.append(table(self.t("st_tweaks"),
+                           [self.t("tw_name"), self.t("yes"), ""], tw_rows))
+            sv_rows = []
             for n in SERVICES_ORDER:
                 if not ops.unit_exists(n):
                     continue
@@ -3010,22 +3247,29 @@ class MainWindow(QMainWindow):
                     cc, w = col("green"), self.t("svc_on")
                 else:
                     cc, w = col("yellow"), self.t("svc_onoff")
-                P.append("<span style='color:%s;'>%s</span> — %s — %s"
-                         % (cc, n, w, SERVICES_META[n][self.lang]))
-            P.append("<h3 style='color:%s;'>%s</h3>" % (col("blue"), self.t("st_kernel")))
+                sv_rows.append("<tr><td style='color:%s;'><b>%s</b></td><td style='color:%s;'><b>%s</b></td><td style='color:%s;'>%s</td></tr>" % (
+                    col("fg"), esc(n), cc, esc(w), col("gray"),
+                    esc(SERVICES_META[n][self.lang])))
+            P.append(table(self.t("st_services"),
+                           [self.t("svc_name"), self.t("svc_state"), self.t("svc_desc")],
+                           sv_rows))
+            kn_rows = []
             kern = [("vm.swappiness", self.t("kern_sw"), A.get("swap", False)),
                     ("vm.vfs_cache_pressure", self.t("kern_vfs"), A.get("sysctl_cache", False)),
-                    ("kernel.numa_balancing", self.t("kern_numa"), A.get("sysctl_numa", False))]
+                    ("kernel.numa_balancing", self.t("kern_numa"), A.get("sysctl_numa", False)),
+                    ("net.ipv4.tcp_congestion_control", "BBR", A.get("bbr", False))]
             for p, dsc, ok in kern:
                 cc = col("green") if ok else col("red")
-                P.append("%s = <b>%s</b> — %s <span style='color:%s;'>[%s]</span>"
-                         % (p, vals[p], dsc, cc, self.t("yes") if ok else self.t("no")))
+                kn_rows.append("<tr><td style='color:%s;'><b>%s</b></td><td style='color:%s;'><b>%s</b></td><td style='color:%s;'>%s</td><td style='color:%s;'><b>%s</b></td></tr>" % (
+                    col("fg"), esc(p), col("fg"), esc(vals[p]), col("gray"), esc(dsc),
+                    cc, self.t("yes") if ok else self.t("no")))
             timer = ops.service_enabled("biweekly-upgrade.timer")
-            cc = col("green") if timer == "enabled" else col("gray")
-            P.append("%s: <span style='color:%s;'>%s</span>"
-                     % (self.t("st_timer"), cc, self._fmt_state(timer)))
-            html = "".join("<p style='margin:2px 0;'>%s</p>" % x for x in P)
-            self.sig.status_html.emit(html)
+            tcc = col("green") if timer == "enabled" else col("gray")
+            kn_rows.append("<tr><td style='color:%s;'><b>%s</b></td><td style='color:%s;'><b>%s</b></td><td colspan='2'></td></tr>" % (
+                col("fg"), esc(self.t("st_timer")), tcc, esc(self._fmt_state(timer))))
+            P.append(table(self.t("st_kernel"),
+                           [self.t("kn_param"), self.t("kn_val"), "", ""], kn_rows))
+            self.sig.status_html.emit("".join(P))
         except Exception as e:
             traceback.print_exc()
             try:
@@ -3035,25 +3279,43 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
+    def _fmt_state(self, value):
+        mapping = {
+            "enabled": self.t("st_enabled"),
+            "disabled": self.t("st_disabled"),
+            "masked": self.t("st_masked"),
+            "not-found": self.t("st_notfound"),
+            "active": self.t("run_yes"),
+            "inactive": self.t("run_no"),
+        }
+        return mapping.get(value, value)
+
+    def _swap_size_gb(self):
+        try:
+            with open("/proc/meminfo", "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    if line.startswith("SwapTotal:"):
+                        return int(line.split()[1]) / 1024.0 / 1024.0
+        except Exception:
+            pass
+        return None
+
     def _update_badges(self):
+        c = self.colors()
+
+        def pill(lbl, ok):
+            lbl.setObjectName("badge_yes" if ok else "badge_no")
+            lbl.setText(self.t("applied_yes") if ok else self.t("applied_no"))
+            lbl.setStyleSheet(
+                "background:%s; color:%s; border-radius:7px; padding:3px 9px; font-weight:bold;"
+                % (c["green_bg"] if ok else c["gray_bg"],
+                   c["green"] if ok else c["gray"]))
         for k, b in self.badges.items():
-            ok = self.applied.get(k, False)
-            b.setObjectName("badge_yes" if ok else "badge_no")
-            b.setText(self.t("applied_yes") if ok else self.t("applied_no"))
-            b.style().unpolish(b)
-            b.style().polish(b)
+            pill(b, self.applied.get(k, False))
         for k, b in self.mount_badges.items():
-            ok = self.mount_applied.get(k, False)
-            b.setObjectName("badge_yes" if ok else "badge_no")
-            b.setText(self.t("applied_yes") if ok else self.t("applied_no"))
-            b.style().unpolish(b)
-            b.style().polish(b)
+            pill(b, self.mount_applied.get(k, False))
         for k, b in self.steam_badges.items():
-            ok = self.steam_applied.get(k, False)
-            b.setObjectName("badge_yes" if ok else "badge_no")
-            b.setText(self.t("applied_yes") if ok else self.t("applied_no"))
-            b.style().unpolish(b)
-            b.style().polish(b)
+            pill(b, self.steam_applied.get(k, False))
 
     def _on_log(self, msg, tag):
         c = self.colors()
@@ -3153,12 +3415,17 @@ class MainWindow(QMainWindow):
         self._spawn_task(self._applied_work)
 
     def apply_hardware_restrictions(self):
-        for k in ("corectrl", "ppfeaturemask", "vrr", "radv"):
-            if self.state.gpu not in ("AMD", "Unknown"):
+        if self.state.gpu not in ("AMD", "Unknown"):
+            for k in ("corectrl", "ppfeaturemask", "vrr", "radv"):
                 w = self.option_widgets.get(k)
                 if w is not None:
                     w.setEnabled(False)
                 self.opts_state[k] = False
+        if self.state.gpu not in ("NVIDIA", "Unknown"):
+            w = self.option_widgets.get("nvidia_modeset")
+            if w is not None:
+                w.setEnabled(False)
+            self.opts_state["nvidia_modeset"] = False
         if self.state.has_raid:
             w = self.option_widgets.get("raid")
             if w is not None:
@@ -3193,8 +3460,9 @@ class MainWindow(QMainWindow):
                 for k in selected:
                     f.write("%s: %s\n" % (k, self.om(k)[0]))
                 f.write("\n[parameters]\ncorectrl_group=%s\nswap_value=%s\n"
-                        "update_schedule=%s\n"
-                        % (self.corectrl_group, self.swap_value, self.schedule_value))
+                        "commit_value=%s\nthp_value=%s\nupdate_schedule=%s\n"
+                        % (self.corectrl_group, self.swap_value, self.commit_value,
+                           self.thp_value, self.schedule_value))
             self.log("Config saved: %s" % path, "success")
         except Exception as e:
             QMessageBox.warning(self, APP_NAME, str(e))
@@ -3206,6 +3474,49 @@ class MainWindow(QMainWindow):
                 e.ignore()
                 return
         e.accept()
+
+
+QSS = """
+QMainWindow, QWidget#central { background: {bg}; }
+QScrollArea { background: {panel}; border: none; }
+QScrollArea > QWidget > QWidget { background: {panel}; }
+QWidget#optinner { background: {panel}; }
+QTabWidget::pane { border: 1px solid {border}; border-radius: 10px; background: {panel}; }
+QTabBar::tab { background: {tab}; color: {fg}; padding: 9px 22px; border-top-left-radius: 10px; border-top-right-radius: 10px; margin-right: 3px; }
+QTabBar::tab:selected { background: qlineargradient(x1:0,y1:0,x2:1,y2:1, stop:0 {accent}, stop:1 {accent2}); color: {accent_fg}; font-weight: bold; }
+QTabBar::tab:hover:!selected { background: {tab_hover}; }
+QPushButton { background: {button}; color: {fg}; border: none; border-radius: 9px; padding: 8px 14px; }
+QPushButton:hover { background: {button_hover}; }
+QPushButton:disabled { background: {button_dis}; color: {fg_dis}; }
+QPushButton#accent { background: qlineargradient(x1:0,y1:0,x2:1,y2:1, stop:0 {accent}, stop:1 {accent2}); color: {accent_fg}; font-weight: bold; }
+QPushButton#accent:hover { background: {accent2}; }
+QPushButton#qbtn { background: {button}; color: {blue}; font-weight: bold; border-radius: 12px; padding: 2px 8px; }
+QCheckBox { color: {fg}; spacing: 8px; }
+QCheckBox::indicator { width: 18px; height: 18px; border-radius: 5px; border: 2px solid {scroll}; background: {panel}; }
+QCheckBox::indicator:checked { background: {accent}; border-color: {accent}; }
+QCheckBox:disabled { color: {fg_dis}; }
+QLineEdit, QComboBox { background: {entry}; color: {fg}; border: 1px solid {border}; border-radius: 7px; padding: 4px 8px; }
+QComboBox::drop-down { border: none; width: 22px; }
+QTableWidget { background: {panel}; color: {fg}; gridline-color: {border}; border: 1px solid {border}; border-radius: 10px; }
+QTableWidget::item:selected { background: {sel}; }
+QHeaderView::section { background: {tab}; color: {fg}; padding: 7px; border: none; border-right: 1px solid {border}; }
+QTextEdit { background: {terminal}; color: {terminal_fg}; border: 1px solid {border}; border-radius: 10px; }
+QScrollBar:vertical { background: {panel}; width: 10px; border-radius: 5px; }
+QScrollBar::handle:vertical { background: {scroll}; border-radius: 5px; min-height: 24px; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+QScrollBar:horizontal { background: {panel}; height: 10px; border-radius: 5px; }
+QScrollBar::handle:horizontal { background: {scroll}; border-radius: 5px; min-width: 24px; }
+QFrame#optrow { background: transparent; border-radius: 10px; }
+QFrame#optrow:hover { background: {row_hover}; }
+QLabel#badge_yes { background: {green_bg}; color: {green}; border-radius: 7px; padding: 3px 9px; font-weight: bold; }
+QLabel#badge_no { background: {gray_bg}; color: {gray}; border-radius: 7px; padding: 3px 9px; }
+QFrame#toast { background: {panel}; border: 1px solid {border}; border-radius: 12px; }
+QMenu { background: {panel}; color: {fg}; border: 1px solid {border}; border-radius: 8px; padding: 6px; }
+QMenu::item { padding: 6px 18px; border-radius: 6px; }
+QMenu::item:selected { background: {row_hover}; }
+QToolTip { background: {panel}; color: {fg}; border: 1px solid {border}; }
+QDialog#infodlg { background: {panel}; border: 2px solid {accent}; border-radius: 12px; }
+"""
 
 
 def main():
