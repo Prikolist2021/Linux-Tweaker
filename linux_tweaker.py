@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Linux Tweaker v0.08
+Linux Tweaker v0.08 (build 0.08.1)
 Графическая оболочка тюнинга Linux Mint / Ubuntu / Debian на PyQt6.
 RU/EN, светлая/тёмная тема, детект применённых настроек,
-откат, бэкапы, mount-опции, симлинки compatdata для Steam.
-Диалоги справки: модальные, перетаскиваемые, без крашей.
+откат, бэкапы, mount-опции, симлинки compatdata для Steam, отладочный лог.
 """
 import sys, os, re, subprocess, time, shutil, glob, pwd, grp, threading, traceback
 from PyQt6.QtCore import (Qt, QObject, QThread, pyqtSignal, QTimer,
@@ -14,14 +13,15 @@ from PyQt6.QtGui import (QIcon, QPixmap, QPainter, QColor, QPen, QBrush,
                          QPainterPath, QLinearGradient, QTransform, QTextCursor)
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget,
                              QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-                             QCheckBox, QLineEdit, QComboBox, QTextEdit, QTextBrowser,
-                             QTableWidget, QTableWidgetItem, QAbstractItemView,
-                             QHeaderView, QScrollArea, QFrame, QInputDialog,
-                             QMessageBox, QFileDialog, QMenu, QDialog,
+                             QCheckBox, QLineEdit, QComboBox, QTextEdit,
+                             QTextBrowser, QTableWidget, QTableWidgetItem,
+                             QAbstractItemView, QHeaderView, QScrollArea, QFrame,
+                             QInputDialog, QMessageBox, QFileDialog, QMenu, QDialog,
                              QGraphicsOpacityEffect)
 
 APP_NAME = "Linux Tweaker"
 APP_VERSION = "0.08"
+BUILD = "0.08.1"
 GITHUB_URL = "https://github.com/Prikolist2021/Linux-Tweaker"
 
 THEMES = {
@@ -232,6 +232,7 @@ STR = {
         "btn_export": "Экспорт", "btn_about": "О твикере",
         "theme_dark": "Тёмная тема", "theme_light": "Светлая тема",
         "lbl_dry": "Сухой прогон", "lbl_terminal": "Терминальный вывод:",
+        "lbl_debug": "Отладка",
         "lbl_group": "Группа:", "lbl_value": "Значение:", "lbl_schedule": "Расписание:",
         "ready": "Готово", "running": "Выполнение...", "done": "Готово",
         "applied_yes": "✓ применено", "applied_no": "не применено",
@@ -293,6 +294,7 @@ STR = {
         "btn_export": "Export", "btn_about": "About",
         "theme_dark": "Dark theme", "theme_light": "Light theme",
         "lbl_dry": "Dry run", "lbl_terminal": "Terminal output:",
+        "lbl_debug": "Debug",
         "lbl_group": "Group:", "lbl_value": "Value:", "lbl_schedule": "Schedule:",
         "ready": "Ready", "running": "Running...", "done": "Done",
         "applied_yes": "✓ applied", "applied_no": "not applied",
@@ -576,6 +578,8 @@ class SudoManager:
         self._keepalive = False
 
     def _cached(self):
+        if os.geteuid() == 0:
+            return True
         try:
             return subprocess.run(["sudo", "-n", "true"], capture_output=True,
                                   timeout=3).returncode == 0
@@ -617,6 +621,9 @@ class SudoManager:
         return self.authenticate()
 
     def run(self, args, input=None):
+        if os.geteuid() == 0:
+            return subprocess.run(list(args), input=input,
+                                  capture_output=True, timeout=180)
         if not self._cached():
             raise PermissionError("Sudo session expired. Press Apply again.")
         return subprocess.run(["sudo", "-n"] + list(args), input=input,
@@ -728,6 +735,10 @@ class SystemState:
         if v and v != "root":
             return v
         try:
+            for pw in pwd.getpwall():
+                if pw.pw_uid >= 1000 and pw.pw_name not in ("nobody", "nfsnobody"):
+                    if os.path.isdir(pw.pw_dir) and pw.pw_dir.startswith("/home/"):
+                        return pw.pw_name
             for pw in pwd.getpwall():
                 if pw.pw_uid >= 1000 and pw.pw_name not in ("nobody", "nfsnobody"):
                     return pw.pw_name
@@ -938,7 +949,8 @@ class SystemOps:
                 orig = parts.copy()
                 parts += [x for x in params if x not in parts]
                 if parts != orig:
-                    new_lines.append('GRUB_CMDLINE_LINUX_DEFAULT="' + " ".join(parts) + '"')
+                    new_lines_val = 'GRUB_CMDLINE_LINUX_DEFAULT="' + " ".join(parts) + '"'
+                    new_lines.append(new_lines_val)
                     changed = True
                 else:
                     new_lines.append(line)
@@ -1029,7 +1041,8 @@ class SystemOps:
         path = "/etc/systemd/journald.conf"
         content = self.read_file(path)
         if content is None:
-            self.log("Cannot read %s" % path, "error"); return False
+            self.log("Cannot read %s" % path, "error")
+            return False
         if (re.search(r"^\s*Storage\s*=\s*volatile\s*$", content, re.M)
                 and re.search(r"^\s*RuntimeMaxUse\s*=\s*50M\s*$", content, re.M)):
             self.log("journald already configured", "info"); return True
@@ -1324,7 +1337,9 @@ class SystemOps:
         content = self.read_file(path)
         if not content:
             self.log("Cannot read /etc/fstab", "error"); return False
-        dev = next((it["dev"] for it in self.mount_items if mp in it["mps"]), None)
+        dev = next((it["dev"] for it in (self.mount_items and sum(
+            ([[x] for x in []] or []), [])) or []), None)
+        dev = next((it["dev"] for it in parse_mounts() if it["mp"] == mp), None)
         uuid = self._uuid_of(dev) if dev else ""
         lines = lines_in(content)
         idx, parts = self._fstab_find(lines, mp, uuid)
@@ -1353,7 +1368,7 @@ class SystemOps:
         content = self.read_file(path)
         if not content:
             self.log("Cannot read /etc/fstab", "error"); return False
-        dev = next((it["dev"] for it in self.mount_items if mp in it["mps"]), None)
+        dev = next((it["dev"] for it in parse_mounts() if it["mp"] == mp), None)
         uuid = self._uuid_of(dev) if dev else ""
         lines = lines_in(content)
         idx, parts = self._fstab_find(lines, mp, uuid)
@@ -1402,7 +1417,7 @@ class SystemOps:
         if self.dry_run:
             self.log("[DRY RUN] fstab commit=%s" % val, "warning"); return True
         ok = True
-        for m in self.mount_items:
+        for m in getattr(self, "mount_items", []):
             for mp in m["mps"]:
                 ok = self._mount_commit_edit(mp, val, True) and ok
         if ok:
@@ -1413,7 +1428,7 @@ class SystemOps:
         if self.dry_run:
             self.log("[DRY RUN] fstab remove commit", "warning"); return True
         ok = True
-        for m in self.mount_items:
+        for m in getattr(self, "mount_items", []):
             for mp in m["mps"]:
                 ok = self._mount_commit_edit(mp, "", False) and ok
         if ok:
@@ -1426,7 +1441,7 @@ class SystemOps:
                 content = f.read()
         except Exception:
             return False
-        if not self.mount_items:
+        if not getattr(self, "mount_items", None):
             return False
         for m in self.mount_items:
             found = False
@@ -1555,7 +1570,7 @@ class SystemOps:
                   'info() { apt show "$@"; }', ""]
         block += ["clean() {", "    sudo apt autoremove -y && sudo apt autoclean && sudo apt clean", "}", ""]
         block += ["space() {", "    df -h /", "}", ""]
-        block += ["fix() {", "    sudo apt --fix-broken install -y && sudo dpkg --configure -a", "}", ""]
+        block += ["fix() {", "    sudo apt --fix-broken install -y", "    sudo dpkg --configure -a", "}", ""]
         block += ["mem() {", "    sync && sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches' && free -h", "}", ""]
         block += ["serv() {", "    systemctl list-unit-files --type=service | less", "}", ""]
         block += ["update_time() {",
@@ -1994,7 +2009,6 @@ class Toast(QFrame):
 
 
 class DraggableDialog(QDialog):
-    """Модальный frameless-диалог, который можно перетаскивать за фон/шапку."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self._drag_pos = None
@@ -2002,7 +2016,6 @@ class DraggableDialog(QDialog):
     def mousePressEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:
             self._drag_pos = e.globalPosition().toPoint() - self.frameGeometry().topLeft()
-            e.accept()
 
     def mouseMoveEvent(self, e):
         if self._drag_pos is not None and e.buttons() == Qt.MouseButton.LeftButton:
@@ -2032,8 +2045,9 @@ class MainWindow(QMainWindow):
         self.steam_state = {}
         self._tasks = []
         self._ram_cache = None
-        self._info_dlg = None
         self.sched_lbl = None
+        self.debug_enabled = False
+        self._debug_fh = None
         self.sudo = SudoManager()
         self.sudo.prompt_password = self._ask_password
         self.sudo.show_error = lambda m: QMessageBox.warning(
@@ -2041,6 +2055,9 @@ class MainWindow(QMainWindow):
             self.t("sudo_wrong") + ("\n" + m if m else ""))
         self.state = SystemState()
         self.state.detect()
+        self.debug_log_path = os.path.join(self.state.user_home,
+                                           "linux-tweaker-debug.log")
+        self._install_excepthooks()
         dg = self.state.user_name if self.state.user_name != "root" else "sudo"
         self.corectrl_group = dg
         self.swap_value = "150" if self.state.swap_type == "zram" else "10"
@@ -2086,14 +2103,66 @@ class MainWindow(QMainWindow):
         self.sig.toast.connect(self._on_toast)
         self.sig.spawn.connect(self._spawn_task)
         self.build_ui()
-        self.log("%s v%s запущен" % (APP_NAME, APP_VERSION), "success")
+        self.log("%s v%s (build %s) запущен" % (APP_NAME, APP_VERSION, BUILD), "success")
         self.log("GPU: %s %s" % (self.state.gpu, self.state.gpu_model), "info")
+        if self.state.user_name == "root":
+            self.log("Running as root: user-specific tweaks (.bashrc, PipeWire, Steam) "
+                     "will target /root, not your home folder.", "warning")
         QTimer.singleShot(300, lambda: self._spawn_task(self._services_work))
         QTimer.singleShot(600, lambda: self._spawn_task(self._applied_work))
         QTimer.singleShot(900, lambda: self._spawn_task(self._status_work))
 
+    def _install_excepthooks(self):
+        def hook(exc_type, exc_value, exc_tb):
+            traceback.print_exception(exc_type, exc_value, exc_tb)
+            self._debug_write("CRASH %s: %s" % (exc_type.__name__, exc_value),
+                              tb_obj=(exc_type, exc_value, exc_tb))
+        sys.excepthook = hook
+
+        def thook(args):
+            traceback.print_exception(args.exc_type, args.exc_value, args.exc_tb)
+            self._debug_write("THREAD CRASH %s: %s"
+                              % (args.exc_type.__name__, args.exc_value),
+                              tb_obj=(args.exc_type, args.exc_value, args.exc_tb))
+        threading.excepthook = thook
+
+    def _debug_write(self, msg, tb_obj=None):
+        if not self.debug_enabled or self._debug_fh is None:
+            return
+        try:
+            ts = time.strftime("%Y-%m-%d %H:%M:%S")
+            self._debug_fh.write("[%s] %s\n" % (ts, msg))
+            if tb_obj:
+                traceback.print_exception(*tb_obj, file=self._debug_fh)
+            self._debug_fh.flush()
+        except Exception:
+            pass
+
+    def _set_debug(self, on):
+        self.debug_enabled = bool(on)
+        if on:
+            try:
+                self._debug_fh = open(self.debug_log_path, "a", encoding="utf-8")
+                self._debug_fh.write("\n=== BUILD %s | session start %s ===\n"
+                                     % (BUILD, time.strftime("%Y-%m-%d %H:%M:%S")))
+                self._debug_fh.flush()
+                self.log("Debug log: %s" % self.debug_log_path, "info")
+            except Exception as e:
+                self.debug_enabled = False
+                self._debug_fh = None
+                self.log("Cannot open debug log: %s" % e, "error")
+        else:
+            if self._debug_fh:
+                try:
+                    self._debug_fh.write("=== session end %s ===\n"
+                                         % time.strftime("%Y-%m-%d %H:%M:%S"))
+                    self._debug_fh.close()
+                except Exception:
+                    pass
+            self._debug_fh = None
+
     def t(self, k):
-        return STR[self.lang][k]
+        return STR[self.lang].get(k, k)
 
     def om(self, k):
         return OPTIONS_META[k][self.lang]
@@ -2243,6 +2312,7 @@ class MainWindow(QMainWindow):
         return t
 
     def log(self, msg, tag="normal"):
+        self._debug_write("<%s> %s" % (tag, msg.rstrip()))
         self.sig.log.emit(msg, tag)
 
     def build_ui(self):
@@ -2267,7 +2337,7 @@ class MainWindow(QMainWindow):
         title = QLabel(APP_NAME)
         title.setStyleSheet("font-size: 20px; font-weight: bold; color: %s;" % c["accent"])
         head.addWidget(title)
-        ver = QLabel("v" + APP_VERSION)
+        ver = QLabel("v%s (%s)" % (APP_VERSION, BUILD))
         ver.setStyleSheet("color: %s;" % c["gray"])
         head.addWidget(ver)
         head.addStretch(1)
@@ -2318,6 +2388,12 @@ class MainWindow(QMainWindow):
         self.progress.theme_colors = c
         self.progress.setFixedWidth(220)
         sb.addWidget(self.progress)
+        self.debug_check = QCheckBox(self.t("lbl_debug"))
+        self.debug_check.blockSignals(True)
+        self.debug_check.setChecked(self.debug_enabled)
+        self.debug_check.blockSignals(False)
+        self.debug_check.toggled.connect(self._set_debug)
+        sb.addWidget(self.debug_check)
         root.addLayout(sb)
         self.toast_w = Toast(central)
         self.theme_btn.setText(self.t("theme_dark") if self.theme == "light"
@@ -2611,26 +2687,33 @@ class MainWindow(QMainWindow):
             QApplication.clipboard().setText(cur.selectedText())
 
     def _show_option_help(self, key):
-        txt = OPTIONS_HELP.get(key, {}).get(self.lang, "")
-        if not txt:
-            return
-        title = self.om(key)[0] if key in OPTIONS_META else \
-            (self.t("mount_title") if key == "mount" else self.t("steam_title"))
-        self._open_info_dialog(title, "<p style='font-size:14px;'>%s</p>" % txt)
+        try:
+            txt = OPTIONS_HELP.get(key, {}).get(self.lang, "")
+            if not txt:
+                return
+            title = self.om(key)[0] if key in OPTIONS_META else \
+                (self.t("mount_title") if key == "mount" else self.t("steam_title"))
+            self._open_info_dialog(title, "<p style='font-size:14px;'>%s</p>" % txt)
+        except Exception as e:
+            traceback.print_exc()
+            self.log("Help error: %s" % e, "error")
 
     def _show_service_help(self, name):
-        txt = SERVICES_HELP.get(name, {}).get(self.lang, "")
-        if not txt:
-            return
-        self._open_info_dialog(name, "<p style='font-size:14px;'>%s</p>" % txt)
+        try:
+            txt = SERVICES_HELP.get(name, {}).get(self.lang, "")
+            if not txt:
+                return
+            self._open_info_dialog(name, "<p style='font-size:14px;'>%s</p>" % txt)
+        except Exception as e:
+            traceback.print_exc()
+            self.log("Help error: %s" % e, "error")
 
     def _open_info_dialog(self, title, html):
         c = self.colors()
         dlg = DraggableDialog(self)
         dlg.setObjectName("infodlg")
-        dlg.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+        dlg.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
         dlg.setModal(True)
-        self._info_dlg = dlg
         dlg.resize(min(720, self.screen_w - 60), min(560, self.screen_h - 80))
         vl = QVBoxLayout(dlg)
         vl.setContentsMargins(14, 14, 14, 14)
@@ -2645,22 +2728,20 @@ class MainWindow(QMainWindow):
         cb.clicked.connect(dlg.close)
         hd.addWidget(cb)
         vl.addLayout(hd)
-        te = QTextEdit()
+        te = QTextBrowser()
         te.setReadOnly(True)
         te.setOpenExternalLinks(True)
         te.setHtml(html)
         vl.addWidget(te)
         dlg.exec()
-        self._info_dlg = None
 
     def show_about(self):
         c = self.colors()
         dlg = DraggableDialog(self)
         dlg.setObjectName("infodlg")
-        dlg.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+        dlg.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
         dlg.setModal(True)
-        self._info_dlg = dlg
-        dlg.resize(min(640, self.screen_w - 60), min(420, self.screen_h - 80))
+        dlg.resize(min(640, self.screen_w - 60), min(460, self.screen_h - 80))
         vl = QVBoxLayout(dlg)
         vl.setContentsMargins(18, 18, 18, 18)
         hd = QHBoxLayout()
@@ -2679,19 +2760,18 @@ class MainWindow(QMainWindow):
         te.setOpenExternalLinks(True)
         html = ('<div style="font-family: monospace;">'
                 '<h2 style="color:%s;">%s v%s</h2>'
+                '<p><b>%s:</b> %s (build %s)</p>'
                 '<p>%s</p>'
-                '<p><b>%s:</b> %s</p>'
                 '<p><b>%s:</b> %s</p>'
                 '<p><a href="%s">%s</a></p></div>'
                 % (c["accent"], APP_NAME, APP_VERSION,
+                   self.t("about_ver"), APP_VERSION, BUILD,
                    self.t("about_purpose"),
                    self.t("about_author"), self.t("about_author_name"),
-                   self.t("about_ver"), APP_VERSION,
                    GITHUB_URL, GITHUB_URL))
         te.setHtml(html)
         vl.addWidget(te)
         dlg.exec()
-        self._info_dlg = None
 
     def _open_path(self, path):
         ops = SystemOps(self.sudo, self.state, lambda m, t: None, True)
@@ -2716,9 +2796,13 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def _open_ext(self, path):
-        for cmd in (["xed", path], ["mousepad", path], ["gedit", path],
-                    ["kate", path], ["pluma", path],
-                    ["xdg-open", path], ["gio", "open", path]):
+        prefix = []
+        if os.geteuid() == 0 and self.state.user_name != "root":
+            prefix = ["sudo", "-u", self.state.user_name]
+        for cmd in (prefix + ["xed", path], prefix + ["mousepad", path],
+                    prefix + ["gedit", path], prefix + ["kate", path],
+                    prefix + ["pluma", path], prefix + ["xdg-open", path],
+                    prefix + ["gio", "open", path]):
             try:
                 subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
                                  stderr=subprocess.DEVNULL,
@@ -3187,12 +3271,11 @@ class MainWindow(QMainWindow):
                 bc = col("border")
                 h = ("<table border='1' cellspacing='0' cellpadding='4' width='100%%' "
                      "style='border-collapse:collapse; border:1px solid %s;'>" % bc)
-                h += ("<tr><th colspan='%d' style='background:%s; color:%s; "
-                      "text-align:left; border:1px solid %s;'>%s</th></tr>"
-                      % (len(headers), col("tab"), col("fg"), bc, esc(title)))
+                h += "<tr><th colspan='%d' style='background:%s; color:%s; text-align:left;'>%s</th></tr>" % (
+                    len(headers), col("tab"), col("fg"), esc(title))
                 h += "<tr>" + "".join(
-                    "<td style='background:%s; color:%s; border:1px solid %s;'><b>%s</b></td>"
-                    % (col("panel"), col("gray"), bc, esc(x)) for x in headers) + "</tr>"
+                    "<td style='background:%s; color:%s; border:1px solid %s;'><b>%s</b></td>" % (
+                        col("panel"), col("gray"), bc, esc(x)) for x in headers) + "</tr>"
                 h += "".join(rows_html)
                 h += "</table><br>"
                 return h
@@ -3256,9 +3339,9 @@ class MainWindow(QMainWindow):
                   ("ntsync", self.t("w_yes") if self.state.ntsync else self.t("w_no")),
                   (self.t("user_lbl"), self.state.user_name),
                   (self.t("home_lbl"), self.state.user_home)]
-            hw_rows = ["<tr><td style='color:%s;'><b>%s</b></td><td style='color:%s;'>%s</td></tr>"
-                       % (col("gray"), esc(k), col("fg"), esc(v)) for k, v in hw]
-            P.append(table(self.t("st_hw"), [self.t("st_hw"), ""], hw_rows))
+            hw_rows = ["<tr><td style='color:%s;'><b>%s</b></td><td style='color:%s;'>%s</td></tr>" % (
+                col("gray"), esc(k), col("fg"), esc(v)) for k, v in hw]
+            P.append(table(self.t("st_hw"), [self.t("kn_param"), self.t("kn_val")], hw_rows))
             seen = {}
             for it in parse_mounts():
                 if it["mp"] == "/boot/efi" or (it["fstype"] == "vfat"
@@ -3272,15 +3355,11 @@ class MainWindow(QMainWindow):
                 if not d:
                     continue
                 total, free = d
-                part_rows.append(
-                    "<tr><td style='color:%s;'><b>%s</b> (%s)</td>"
-                    "<td style='color:%s;'>%s</td>"
-                    "<td style='color:%s;'>%.1f %s</td>"
-                    "<td style='color:%s;'>%.1f %s</td></tr>"
-                    % (col("fg"), esc(", ".join(info["mps"])), esc(os.path.basename(dev)),
-                       col("gray"), esc(info["fstype"]),
-                       col("fg"), total, self.t("gb"),
-                       col("fg"), free, self.t("gb")))
+                part_rows.append("<tr><td style='color:%s;'><b>%s</b> (%s)</td><td style='color:%s;'>%s</td><td style='color:%s;'>%.1f %s</td><td style='color:%s;'>%.1f %s</td></tr>" % (
+                    col("fg"), esc(", ".join(info["mps"])), esc(os.path.basename(dev)),
+                    col("gray"), esc(info["fstype"]),
+                    col("fg"), total, self.t("gb"),
+                    col("fg"), free, self.t("gb")))
             P.append(table(self.t("st_parts"),
                            [self.t("part_mount"), self.t("part_fs"),
                             self.t("part_total"), self.t("part_free")], part_rows))
@@ -3289,31 +3368,22 @@ class MainWindow(QMainWindow):
                 label, _d, _c, short = self.om(k)
                 ok = A.get(k, False)
                 cc = col("green") if ok else col("red")
-                tw_rows.append(
-                    "<tr><td style='color:%s;'><b>%s</b></td>"
-                    "<td style='color:%s;'><b>%s</b></td>"
-                    "<td style='color:%s;'>%s</td></tr>"
-                    % (col("fg"), esc(label), cc,
-                       self.t("yes") if ok else self.t("no"), col("gray"), esc(short)))
+                tw_rows.append("<tr><td style='color:%s;'><b>%s</b></td><td style='color:%s;'><b>%s</b></td><td style='color:%s;'>%s</td></tr>" % (
+                    col("fg"), esc(label), cc, self.t("yes") if ok else self.t("no"),
+                    col("gray"), esc(short)))
             for m in self.mount_items:
                 ok = self.mount_applied.get(m["mps"][0], False)
                 cc = col("green") if ok else col("red")
-                tw_rows.append(
-                    "<tr><td style='color:%s;'><b>%s</b></td>"
-                    "<td style='color:%s;'><b>%s</b></td>"
-                    "<td style='color:%s;'>%s</td></tr>"
-                    % (col("fg"), esc(self.t("mount_short")), cc,
-                       self.t("yes") if ok else self.t("no"), col("gray"),
-                       esc(", ".join(m["mps"]))))
+                tw_rows.append("<tr><td style='color:%s;'><b>%s</b></td><td style='color:%s;'><b>%s</b></td><td style='color:%s;'>%s</td></tr>" % (
+                    col("fg"), esc(self.t("mount_short")), cc,
+                    self.t("yes") if ok else self.t("no"), col("gray"),
+                    esc(", ".join(m["mps"]))))
             for lib in self.steam_items:
                 ok = self.steam_applied.get(lib, False)
                 cc = col("green") if ok else col("red")
-                tw_rows.append(
-                    "<tr><td style='color:%s;'><b>%s</b></td>"
-                    "<td style='color:%s;'><b>%s</b></td>"
-                    "<td style='color:%s;'>%s</td></tr>"
-                    % (col("fg"), esc(self.t("steam_short")), cc,
-                       self.t("yes") if ok else self.t("no"), col("gray"), esc(lib)))
+                tw_rows.append("<tr><td style='color:%s;'><b>%s</b></td><td style='color:%s;'><b>%s</b></td><td style='color:%s;'>%s</td></tr>" % (
+                    col("fg"), esc(self.t("steam_short")), cc,
+                    self.t("yes") if ok else self.t("no"), col("gray"), esc(lib)))
             P.append(table(self.t("st_tweaks"),
                            [self.t("tw_name"), self.t("yes"), ""], tw_rows))
             sv_rows = []
@@ -3330,12 +3400,9 @@ class MainWindow(QMainWindow):
                     cc, w = col("green"), self.t("svc_on")
                 else:
                     cc, w = col("yellow"), self.t("svc_onoff")
-                sv_rows.append(
-                    "<tr><td style='color:%s;'><b>%s</b></td>"
-                    "<td style='color:%s;'><b>%s</b></td>"
-                    "<td style='color:%s;'>%s</td></tr>"
-                    % (col("fg"), esc(n), cc, esc(w), col("gray"),
-                       esc(SERVICES_META[n][self.lang])))
+                sv_rows.append("<tr><td style='color:%s;'><b>%s</b></td><td style='color:%s;'><b>%s</b></td><td style='color:%s;'>%s</td></tr>" % (
+                    col("fg"), esc(n), cc, esc(w), col("gray"),
+                    esc(SERVICES_META[n][self.lang])))
             P.append(table(self.t("st_services"),
                            [self.t("svc_name"), self.t("svc_state"), self.t("svc_desc")],
                            sv_rows))
@@ -3346,25 +3413,20 @@ class MainWindow(QMainWindow):
                     ("net.ipv4.tcp_congestion_control", "BBR", A.get("bbr", False))]
             for p, dsc, ok in kern:
                 cc = col("green") if ok else col("red")
-                kn_rows.append(
-                    "<tr><td style='color:%s;'><b>%s</b></td>"
-                    "<td style='color:%s;'><b>%s</b></td>"
-                    "<td style='color:%s;'>%s</td>"
-                    "<td style='color:%s;'><b>%s</b></td></tr>"
-                    % (col("fg"), esc(p), col("fg"), esc(vals[p]), col("gray"), esc(dsc),
-                       cc, self.t("yes") if ok else self.t("no")))
+                kn_rows.append("<tr><td style='color:%s;'><b>%s</b></td><td style='color:%s;'><b>%s</b></td><td style='color:%s;'>%s</td><td style='color:%s;'><b>%s</b></td></tr>" % (
+                    col("fg"), esc(p), col("fg"), esc(vals[p]), col("gray"), esc(dsc),
+                    cc, self.t("yes") if ok else self.t("no")))
             timer = ops.service_enabled("biweekly-upgrade.timer")
             tcc = col("green") if timer == "enabled" else col("gray")
-            kn_rows.append(
-                "<tr><td style='color:%s;'><b>%s</b></td>"
-                "<td style='color:%s;'><b>%s</b></td>"
-                "<td colspan='2'></td></tr>"
-                % (col("fg"), esc(self.t("st_timer")), tcc, esc(self._fmt_state(timer))))
+            kn_rows.append("<tr><td style='color:%s;'><b>%s</b></td><td style='color:%s;'><b>%s</b></td><td colspan='2'></td></tr>" % (
+                col("fg"), esc(self.t("st_timer")), tcc, esc(self._fmt_state(timer))))
             P.append(table(self.t("st_kernel"),
                            [self.t("kn_param"), self.t("kn_val"), "", ""], kn_rows))
             self.sig.status_html.emit("".join(P))
         except Exception as e:
             traceback.print_exc()
+            self._debug_write("STATUS CRASH: %s" % e,
+                              tb_obj=sys.exc_info())
             try:
                 c = self.colors()
                 self.sig.status_html.emit(
@@ -3547,11 +3609,18 @@ class MainWindow(QMainWindow):
             return
         try:
             with open(path, "w", encoding="utf-8") as f:
-                f.write("%s v%s\n%s\ndry_run=%s\n\n" % (APP_NAME, APP_VERSION,
-                                                       time.strftime("%Y-%m-%d %H:%M:%S"),
-                                                       self.dry_check.isChecked()))
+                f.write("%s v%s (build %s)\n%s\ndry_run=%s\n\n"
+                        % (APP_NAME, APP_VERSION, BUILD,
+                           time.strftime("%Y-%m-%d %H:%M:%S"),
+                           self.dry_check.isChecked()))
                 for k in selected:
                     f.write("%s: %s\n" % (k, self.om(k)[0]))
+                for m in self.mount_items:
+                    if self.mount_state.get(m["mps"][0]):
+                        f.write("mount: %s\n" % ", ".join(m["mps"]))
+                for lib in self.steam_items:
+                    if self.steam_state.get(lib):
+                        f.write("steam: %s\n" % lib)
                 f.write("\n[parameters]\ncorectrl_group=%s\nswap_value=%s\n"
                         "commit_value=%s\nthp_value=%s\nupdate_schedule=%s\n"
                         % (self.corectrl_group, self.swap_value, self.commit_value,
@@ -3566,6 +3635,13 @@ class MainWindow(QMainWindow):
             if r != QMessageBox.StandardButton.Yes:
                 e.ignore()
                 return
+        if self._debug_fh:
+            try:
+                self._debug_fh.write("=== session end %s ===\n"
+                                     % time.strftime("%Y-%m-%d %H:%M:%S"))
+                self._debug_fh.flush()
+            except Exception:
+                pass
         e.accept()
 
 
@@ -3614,8 +3690,12 @@ QDialog#infodlg { background: {panel}; border: 2px solid {accent}; border-radius
 
 def main():
     if "--help" in sys.argv or "-h" in sys.argv:
-        print("%s v%s\npython3 linux_tweaker.py [--dry-run]" % (APP_NAME, APP_VERSION))
+        print("%s v%s (build %s)\npython3 linux_tweaker.py [--dry-run]"
+              % (APP_NAME, APP_VERSION, BUILD))
         sys.exit(0)
+    if os.geteuid() == 0:
+        print("WARNING: Linux Tweaker should be run as a normal user, not as root. "
+              "Sudo will be requested when needed.", file=sys.stderr)
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     win = MainWindow()
