@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Linux Tweaker v0.09
+Linux Tweaker v0.10
 Графическая оболочка тюнинга Linux Mint / Ubuntu / Debian на PyQt6.
 RU/EN, светлая/тёмная тема, детект применённых настроек,
 откат, бэкапы, mount-опции, симлинки compatdata для Steam, отладочный лог.
@@ -17,11 +17,11 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget,
                              QCheckBox, QLineEdit, QComboBox, QTextEdit,
                              QTableWidget, QTableWidgetItem, QAbstractItemView,
                              QHeaderView, QScrollArea, QFrame, QInputDialog,
-                             QMessageBox, QMenu, QDialog,
+                             QMessageBox, QFileDialog, QMenu, QDialog,
                              QGraphicsOpacityEffect)
 
 APP_NAME = "Linux Tweaker"
-APP_VERSION = "0.09"
+APP_VERSION = "0.10"
 GITHUB_URL = "https://github.com/Prikolist2021/Linux-Tweaker"
 
 THEMES = {
@@ -48,10 +48,10 @@ THEMES = {
 OPTIONS_META = {
     "rsyslog": {
         "ru": ("Отключить rsyslog", "Отключает запись подробных журналов на диск. Экономит место и уменьшает износ SSD. Работает сразу.", "Логи системы", "запись журналов на диск"),
-        "en": ("Disable rsyslog", "Stops writing detailed logs to disk. Saves space and SSD wear. Works immediately.", "System logs", "disk logging")},
+        "en": ("Disable rsyslog", "Stops writing detailed logs to disk. Saves space and SSD wear. Works immediately.", "System logs", "detailed rsyslog logging to disk")},
     "journald": {
-        "ru": ("Логи в ОЗУ (journald)", "Переносит журнал системы в оперативную память и ограничивает его 50 МБ. Бережёт SSD. Работает сразу.", "Логи системы", "журнал в памяти"),
-        "en": ("Logs in RAM (journald)", "Moves the system log to RAM and caps it at 50 MB. Saves SSD. Works immediately.", "System logs", "log in RAM")},
+        "ru": ("Логи в ОЗУ (journald)", "Переносит журнал системы в оперативную память и ограничивает его 50 МБ. Бережёт SSD. Работает сразу.", "Логи системы", "хранение журналов systemd в ОЗУ (50 МБ)"),
+        "en": ("Logs in RAM (journald)", "Moves the system log to RAM and caps it at 50 MB. Saves SSD. Works immediately.", "System logs", "systemd journals stored in RAM (50 MB)")},
     "audit": {
         "ru": ("audit=0 (GRUB)", "Отключает фоновую запись каждого действия системы. Убирает лишнюю нагрузку. Нужна перезагрузка.", "Ядро и загрузка", "фоновая запись действий"),
         "en": ("audit=0 (GRUB)", "Stops background logging of every system action. Removes extra load. Needs reboot.", "Kernel & boot", "background action logging")},
@@ -133,7 +133,7 @@ CAT_ORDER = {
 }
 
 OPTIONS_HELP = {
-    "rsyslog": {"ru": "Что это: rsyslog — программа, которая постоянно записывает подробные журналы системы в файлы на диске.\nЗачем включать: диск перестанет получать лишние записи, освободится место и уменьшится износ SSD. Важные сообщения останутся в журнале systemd (команда journalctl).\nКому не нужно: если вы разбираете проблемы системы по старым файлам журналов.\nЧто дальше: работает сразу.",
+    "rsyslog": {"ru": "Что это: rsyslog — программа, которая постоянно записывает подробные журналы системы в файлы на диске.\nЗачем включать: диск перестанет получать лишние записи, освободится место и уменьшится износ SSD. Важные сообщения останутся в журнале systemd (journalctl).\nКому не нужно: если вы разбираете проблемы системы по старым файлам журналов.\nЧто дальше: работает сразу.",
                 "en": "What it is: rsyslog constantly writes detailed system logs to files on disk.\nWhy enable: the disk stops getting extra writes, space frees up and SSD wear drops. Important messages stay in the systemd journal (journalctl).\nWho does not need it: if you troubleshoot using old log files.\nWhat happens next: works immediately."},
     "journald": {"ru": "Что это: журнал systemd — это запись всех событий системы: запусков служб, ошибок, подключений устройств. Обычно он хранится на диске.\nЗачем включать: система перестанет записывать журнал на диск и будет держать его в оперативной памяти. Это уменьшает износ SSD и освобождает место. Размер ограничен 50 МБ, чтобы не занять всю память.\nКому не нужно: если вы разбираетесь с проблемами по старым логам — они исчезнут после перезагрузки.\nЧто дальше: работает сразу.",
                 "en": "What it is: the systemd journal records all system events: service starts, errors, device plugs. It usually lives on disk.\nWhy enable: the system stops writing the journal to disk and keeps it in RAM. This cuts SSD wear and frees space. It is capped at 50 MB so it cannot eat all memory.\nWho does not need it: if you troubleshoot using old logs — they vanish after reboot.\nWhat happens next: works immediately."},
@@ -173,7 +173,7 @@ OPTIONS_HELP = {
                 "en": "What it is: kernel.numa_balancing automatically moves memory between CPU cores (useful on servers).\nWhy enable: on home PCs the moving only hurts and causes stalls. Disabling removes game stalls.\nWho does not need it: if you run a NUMA server and know why you need it.\nWhat happens next: works immediately."},
     "reisub": {"ru": "Что это: Magic SysRq — аварийные клавиши ядра. Последовательность R E I S U B безопасно перезагружает зависший компьютер.\nЗачем включать: при полном зависании вы удерживаете Alt+PrtSc и нажимаете R E I S U B по порядку — система перезагрузится без повреждения файлов.\nКому не нужно: если вы не боитесь жёсткого сброса питания.\nЧто дальше: работает сразу.",
                 "en": "What it is: Magic SysRq is the kernel's emergency keys. The R E I S U B sequence safely reboots a frozen computer.\nWhy enable: on a full freeze you hold Alt+PrtSc and press R E I S U B in order — the system reboots without file damage.\nWho does not need it: if you are not afraid of a hard power reset.\nWhat happens next: works immediately."},
-    "ntsync": {"ru": "Что это: ntsync — модуль ядра, ускоряющий синхронизацию потоков в Wine/Proton.\nЗачем включать: игры под Windows используют много синхронизации, ntsync делает её быстрее — заметный прирост FPS.\nКому не нужно: если у вас ядро старше 6.14 без патча или вы не играете под Wine.\nЧто дальше: работает сразу, если модуль доступен.",
+    "ntsync": {"ru": "Что это: ntsync — модуль ядра, ускоряющий синхронизацию потоков в Wine/Proton.\nЗачем включать: игры под Windows используют много синхронизации; ntsync делает её быстрее — заметный прирост FPS.\nКому не нужно: если у вас ядро старше 6.14 без патча или вы не играете под Wine.\nЧто дальше: работает сразу, если модуль доступен.",
                 "en": "What it is: ntsync is a kernel module speeding up thread sync in Wine/Proton.\nWhy enable: Windows games use lots of sync; ntsync makes it faster — a noticeable FPS gain.\nWho does not need it: if your kernel is older than 6.14 without a patch or you do not game under Wine.\nWhat happens next: works immediately if the module is available."},
     "ntfs3": {"ru": "Что это: ntfs3 — быстрый встроенный драйвер для дисков NTFS (Windows-диски).\nЗачем включать: Mint по умолчанию блокирует его и использует медленный ntfs-3g. Опция снимает блокировку, NTFS-диски работают заметно быстрее.\nКому не нужно: ВНИМАНИЕ — если у вас нет NTFS-дисков, опция не даст ничего.\nЧто дальше: требуется перезагрузка или перемонтирование дисков.",
                 "en": "What it is: ntfs3 is the fast built-in driver for NTFS disks (Windows disks).\nWhy enable: Mint blocks it by default and uses slow ntfs-3g. This lifts the block so NTFS disks run much faster.\nWho does not need it: WARNING — if you have no NTFS disks, it gives nothing.\nWhat happens next: a reboot or remount of the disks is required."},
@@ -183,18 +183,18 @@ OPTIONS_HELP = {
                 "en": "What it is: ready terminal commands added to your .bashrc file.\nWhy enable: commands upd, upgr, update_all, clean, space, mem save time on routine tasks.\nWho does not need it: if you do not use the terminal.\nWhat happens next: they appear in new terminals or after source ~/.bashrc."},
     "autoupdate": {"ru": "Что это: systemd-таймер, который по расписанию сам обновляет систему и Flatpak.\nЗачем включать: вам не нужно помнить об обновлениях — всё сделается само.\nКому не нужно: ВНИМАНИЕ — отключите встроенное автообновление Mint (mintupdate), иначе обновления запустятся дважды и конфликтовать.\nЧто дальше: работает сразу после применения.",
                 "en": "What it is: a systemd timer that auto-updates the system and Flatpak on schedule.\nWhy enable: you do not need to remember updates — everything happens by itself.\nWho does not need it: WARNING — disable Mint's built-in auto-update (mintupdate), otherwise updates run twice and conflict.\nWhat happens next: works immediately after applying."},
-    "mount": {"ru": "Что это: опция монтирования noatime отключает обновление времени последнего доступа к файлам и папкам.\nЗачем включать: каждый файл при чтении больше не вызывает служебную запись на диск. Меньше износа SSD и быстрее чтение.\nКому не нужно: если у вас нет SSD и вы не замечаете износа.\nЧто дальше: требуется перезагрузка.",
-                "en": "What it is: the noatime mount option stops updating last-access time of files and folders.\nWhy enable: each read no longer causes a service write to disk. Less SSD wear and faster reads.\nWho does not need it: if you have no SSD and do not notice wear.\nWhat happens next: a reboot is required."},
+    "mount": {"ru": "Что это: опция монтирования noatime отключает обновление времени последнего доступа к файлам и каталогам.\nЗачем включать: каждый файл при чтении больше не вызывает служебную запись на диск. Меньше износа SSD и быстрее чтение.\nКому не нужно: если у вас нет SSD и вы не замечаете износа.\nЧто дальше: требуется перезагрузка.",
+                "en": "What it is: the noatime mount option stops updating last-access time of files and directories.\nWhy enable: each read no longer causes a service write to disk. Less SSD wear and faster reads.\nWho does not need it: if you have no SSD and do not notice wear.\nWhat happens next: a reboot is required."},
     "steam": {"ru": "Что это: игры Steam под Proton хранят свои данные (префиксы) в папке compatdata в домашней папке.\nЗачем включать: если библиотека Steam лежит на другом диске (NTFS), игра не находит эти данные. Симлинк compatdata в библиотеке указывает на домашнюю папку, и игры работают корректно.\nКому не нужно: если у вас все библиотеки Steam на домашнем диске.\nЧто дальше: работает сразу.",
                 "en": "What it is: Steam Proton games keep their data (prefixes) in a compatdata folder in your home.\nWhy enable: if a Steam library is on another disk (NTFS), games cannot find this data. A compatdata symlink in the library points to the home folder so games work correctly.\nWho does not need it: if all your Steam libraries are on the home disk.\nWhat happens next: works immediately."},
 }
 
 SERVICES_META = {
     "avahi-daemon.service": {"ru": "Поиск устройств в домашней сети: принтеров, телевизоров, Chromecast. Не нужен, если у вас нет сетевого принтера.", "en": "Finds devices on your home network: printers, TVs, Chromecast. Not needed without a network printer."},
-    "avahi-daemon.socket": {"ru": "Будит службу поиска устройств при обращении из сети. Отключается вместе со службой avahi.", "en": "Wakes the device-discovery service on network request. Disable together with avahi service."},
+    "avahi-daemon.socket": {"ru": "Сокет, который будит службу avahi при обращении из сети. Сам по себе бесполезен без службы avahi.", "en": "Socket that wakes the avahi service on network request. Useless on its own without the avahi service."},
     "cups-browsed.service": {"ru": "Ищет сетевые принтеры автоматически. Не нужен, если принтера нет или он подключён по USB.", "en": "Auto-discovers network printers. Not needed without a printer or with a USB printer."},
     "cups.service": {"ru": "Печать и сканирование. Не нужно, если у вас нет принтера или сканера.", "en": "Printing and scanning. Not needed without a printer or scanner."},
-    "cups.socket": {"ru": "Будит службу печати при обращении. Отключается вместе со службой cups.", "en": "Wakes the print service on request. Disable together with cups service."},
+    "cups.socket": {"ru": "Сокет, который будит службу печати при обращении. Сам по себе бесполезен без службы cups.", "en": "Socket that wakes the print service on request. Useless on its own without the cups service."},
     "ModemManager.service": {"ru": "Работа с мобильными модемами через USB или сим-карту. Не нужна, если интернет по Wi-Fi или кабелю.", "en": "Handles mobile modems via USB or SIM. Not needed if internet is Wi-Fi or cable."},
     "openvpn.service": {"ru": "Встроенный VPN-сервер. Не нужен, если вы не поднимаете собственный VPN.", "en": "Built-in VPN server. Not needed unless you run your own VPN."},
     "lvm2-monitor.service": {"ru": "Следит за объединением дисков в один большой (LVM). Не нужен при обычной установке Mint/Ubuntu.", "en": "Watches disks joined into one big volume (LVM). Not needed on a standard Mint/Ubuntu install."},
@@ -206,16 +206,16 @@ SERVICES_META = {
 SERVICES_ORDER = list(SERVICES_META.keys())
 
 SERVICES_HELP = {
-    "avahi-daemon.service": {"ru": "Что это: служба, которая ищет устройства в домашней сети (принтеры, ТВ, колонки) без настройки.\nЗачем включать: нужна только если у вас есть сетевой принтер или вы пользуетесь Chromecast/AirPlay.\nКому не нужно: если у вас нет сетевых принтеров и вы не пользуетесь Chromecast/AirPlay.\nЧто дальше: отключение безопасно.",
+    "avahi-daemon.service": {"ru": "Что это: служба, которая ищет устройства в локальной сети (принтеры, ТВ, колонки) без настройки.\nЗачем включать: нужна только если у вас есть сетевой принтер или вы пользуетесь Chromecast/AirPlay.\nКому не нужно: если у вас нет сетевых принтеров и вы не пользуетесь Chromecast/AirPlay.\nЧто дальше: отключение безопасно.",
                 "en": "What it is: a service that finds devices on your home network (printers, TVs, speakers) without setup.\nWhy enable: only needed if you have a network printer or use Chromecast/AirPlay.\nWho does not need it: if you have no network printers and do not use Chromecast/AirPlay.\nWhat happens next: safe to disable."},
-    "avahi-daemon.socket": {"ru": "Что это: сокет, который будит службу avahi при первом обращении из сети.\nЗачем включать: нужен только вместе со службой avahi.\nКому не нужно: если вы отключили avahi.\nЧто дальше: отключайте вместе со службой, чтобы avahi не «проснулась» сама.",
-                "en": "What it is: a socket that wakes the avahi service on first network request.\nWhy enable: only needed together with the avahi service.\nWho does not need it: if you disabled avahi.\nWhat happens next: disable together with the service so avahi cannot wake up on its own."},
+    "avahi-daemon.socket": {"ru": "Что это: сокет — это «розетка», которая будит службу avahi, когда из сети приходит обращение.\nЗачем включать: нужен только вместе со службой avahi.\nКому не нужно: если вы отключили службу avahi — сокет сам по себе бесполезен.\nЧто дальше: отключайте вместе со службой avahi, чтобы она не «проснулась» сама.",
+                "en": "What it is: a socket is a “plug” that wakes the avahi service when a network request arrives.\nWhy enable: only needed together with the avahi service.\nWho does not need it: if you disabled the avahi service — the socket alone is useless.\nWhat happens next: disable together with the avahi service so it cannot wake up on its own."},
     "cups-browsed.service": {"ru": "Что это: часть системы печати CUPS, которая ищет сетевые принтеры и добавляет их автоматически.\nЗачем включать: нужна только если у вас есть сетевой принтер.\nКому не нужно: если принтера нет или он подключён по USB.\nЧто дальше: отключение безопасно.",
                 "en": "What it is: part of the CUPS printing system that auto-discovers network printers.\nWhy enable: only needed if you have a network printer.\nWho does not need it: if you have no printer or it is USB-connected.\nWhat happens next: safe to disable."},
     "cups.service": {"ru": "Что это: служба печати и сканирования CUPS.\nЗачем включать: нужна только если у вас есть принтер или сканер.\nКому не нужно: если печатающих устройств нет.\nЧто дальше: отключение безопасно; при необходимости печать можно включить обратно.",
                 "en": "What it is: the CUPS printing and scanning service.\nWhy enable: only needed if you have a printer or scanner.\nWho does not need it: if you have no printing devices.\nWhat happens next: safe to disable; printing can be re-enabled later."},
-    "cups.socket": {"ru": "Что это: сокет, который будит службу печати при обращении.\nЗачем включать: нужен только вместе со службой cups.\nКому не нужно: если вы отключили cups.\nЧто дальше: отключайте вместе со службой cups.",
-                "en": "What it is: a socket that wakes the print service on request.\nWhy enable: only needed together with the cups service.\nWho does not need it: if you disabled cups.\nWhat happens next: disable together with the cups service."},
+    "cups.socket": {"ru": "Что это: сокет — это «розетка», которая будит службу печати, когда кто-то отправляет печать.\nЗачем включать: нужен только вместе со службой cups.\nКому не нужно: если вы отключили службу cups — сокет сам по себе бесполезен.\nЧто дальше: отключайте вместе со службой cups, чтобы печать не «проснулась» сама.",
+                "en": "What it is: a socket is a “plug” that wakes the print service when someone prints.\nWhy enable: only needed together with the cups service.\nWho does not need it: if you disabled the cups service — the socket alone is useless.\nWhat happens next: disable together with the cups service so printing cannot wake up on its own."},
     "ModemManager.service": {"ru": "Что это: служба для работы с мобильными модемами — теми, что подключаются к компьютеру через USB или встроены в ноутбук и работают через сим-карту.\nЗачем включать: нужна только если вы выходите в интернет через сим-карту прямо с компьютера.\nКому не нужно: если у вас интернет по Wi-Fi или кабелю — служба не нужна.\nЧто дальше: отключение безопасно. Часто после этого перестают конфликтовать устройства вроде Arduino и переходников USB-Serial.",
                 "en": "What it is: a service for mobile modems — those plugged via USB or built into a laptop and working via SIM.\nWhy enable: only needed if you get internet via SIM directly on the computer.\nWho does not need it: if your internet is Wi-Fi or cable — the service is unneeded.\nWhat happens next: safe to disable. Often Arduino and USB-Serial adapters stop conflicting afterwards."},
     "openvpn.service": {"ru": "Что это: встроенный сервер OpenVPN для входящих VPN-подключений.\nЗачем включать: нужен только если вы подняли собственный VPN-сервер.\nКому не нужно: если вы не настраивали собственный VPN.\nЧто дальше: отключение безопасно.",
@@ -312,6 +312,7 @@ STR = {
         "kern_vfs": "кэш файлов в памяти",
         "kern_numa": "миграция памяти между ядрами",
         "kern_thp": "крупные блоки памяти",
+        "thp_cur": "сейчас: %s",
         "thp_val_always": "всем подряд", "thp_val_madvise": "по запросу",
         "thp_val_never": "выключено",
         "tw_name": "Твик", "kn_param": "Параметр", "kn_val": "Значение",
@@ -377,6 +378,7 @@ STR = {
         "kern_vfs": "file cache in RAM",
         "kern_numa": "memory migration between cores",
         "kern_thp": "large memory blocks",
+        "thp_cur": "now: %s",
         "thp_val_always": "always on", "thp_val_madvise": "on request",
         "thp_val_never": "off",
         "tw_name": "Tweak", "kn_param": "Parameter", "kn_val": "Value",
@@ -2192,7 +2194,8 @@ class MainWindow(QMainWindow):
                                          % (APP_VERSION,
                                             time.strftime("%Y-%m-%d %H:%M:%S")))
                     self._debug_fh.flush()
-                faulthandler.enable(file=self._debug_fh, all_threads=True)
+                if self._debug_fh is not None:
+                    faulthandler.enable(file=self._debug_fh, all_threads=True)
                 self.log("Debug log: %s" % self.debug_log_path, "info")
             except Exception as e:
                 self.debug_enabled = False
@@ -2541,7 +2544,9 @@ class MainWindow(QMainWindow):
             combo.setCurrentText(self.thp_value)
             combo.currentTextChanged.connect(lambda v: setattr(self, "thp_value", v))
             top.addWidget(combo)
-            self.thp_lbl = QLabel(self.t("thp_cur") % (self._thp_current() or "?"))
+            fmt = self.t("thp_cur")
+            cur = self._thp_current() or "?"
+            self.thp_lbl = QLabel(fmt % cur if "%" in fmt else fmt)
             self.thp_lbl.setStyleSheet("color: %s;" % c["gray"])
             top.addWidget(self.thp_lbl)
         elif key == "autoupdate":
@@ -2736,20 +2741,28 @@ class MainWindow(QMainWindow):
             QApplication.clipboard().setText(cur.selectedText())
 
     def _show_option_help(self, key):
-        txt = OPTIONS_HELP.get(key, {}).get(self.lang, "")
-        if not txt:
-            self.log("No help for %s" % key, "info")
-            return
-        title = self.om(key)[0] if key in OPTIONS_META else \
-            (self.t("mount_title") if key == "mount" else self.t("steam_title"))
-        self._open_info_dialog(title, "<p style='font-size:14px;'>%s</p>" % txt)
+        try:
+            txt = OPTIONS_HELP.get(key, {}).get(self.lang, "")
+            if not txt:
+                self.log("No help for %s" % key, "info")
+                return
+            title = self.om(key)[0] if key in OPTIONS_META else \
+                (self.t("mount_title") if key == "mount" else self.t("steam_title"))
+            self._open_info_dialog(title, "<p style='font-size:14px;'>%s</p>" % txt)
+        except Exception as e:
+            traceback.print_exc()
+            self.log("Help error: %s" % e, "error")
 
     def _show_service_help(self, name):
-        txt = SERVICES_HELP.get(name, {}).get(self.lang, "")
-        if not txt:
-            self.log("No help for %s" % name, "info")
-            return
-        self._open_info_dialog(name, "<p style='font-size:14px;'>%s</p>" % txt)
+        try:
+            txt = SERVICES_HELP.get(name, {}).get(self.lang, "")
+            if not txt:
+                self.log("No help for %s" % name, "info")
+                return
+            self._open_info_dialog(name, "<p style='font-size:14px;'>%s</p>" % txt)
+        except Exception as e:
+            traceback.print_exc()
+            self.log("Help error: %s" % e, "error")
 
     def _open_info_dialog(self, title, html):
         dlg = QDialog(self)
@@ -2836,7 +2849,8 @@ class MainWindow(QMainWindow):
         if os.geteuid() == 0 and self.state.user_name != "root":
             prefix = ["sudo", "-u", self.state.user_name]
             env["DISPLAY"] = os.environ.get("DISPLAY", ":0")
-            env["XAUTHORITY"] = os.path.join(self.state.user_home, ".Xauthority")
+            env["XAUTHORITY"] = os.environ.get("XAUTHORITY") or \
+                os.path.join(self.state.user_home, ".Xauthority")
         for cmd in (prefix + ["xed", path], prefix + ["mousepad", path],
                     prefix + ["gedit", path], prefix + ["kate", path],
                     prefix + ["pluma", path], prefix + ["xdg-open", path],
@@ -3518,7 +3532,9 @@ class MainWindow(QMainWindow):
         for k, b in self.steam_badges.items():
             pill(b, self.steam_applied.get(k, False))
         if self.thp_lbl is not None:
-            self.thp_lbl.setText(self.t("thp_cur") % (self._thp_current() or "?"))
+            fmt = self.t("thp_cur")
+            cur = self._thp_current() or "?"
+            self.thp_lbl.setText(fmt % cur if "%" in fmt else fmt)
 
     def _on_log(self, msg, tag):
         c = self.colors()
@@ -3651,6 +3667,31 @@ class MainWindow(QMainWindow):
             if w is not None:
                 w.setEnabled(False)
             self.opts_state["zram"] = False
+
+    def export_config(self):
+        selected = [k for k, v in self.opts_state.items() if v]
+        if not selected:
+            QMessageBox.information(self, APP_NAME, self.t("msg_noopt"))
+            return
+        path, _ = QFileDialog.getSaveFileName(self, self.t("btn_export"),
+                                              os.path.expanduser("~/tweaker-config.txt"),
+                                              "Text files (*.txt)")
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("%s v%s\n%s\ndry_run=%s\n\n" % (APP_NAME, APP_VERSION,
+                                                       time.strftime("%Y-%m-%d %H:%M:%S"),
+                                                       self.dry_check.isChecked()))
+                for k in selected:
+                    f.write("%s: %s\n" % (k, self.om(k)[0]))
+                f.write("\n[parameters]\ncorectrl_group=%s\nswap_value=%s\n"
+                        "commit_value=%s\nthp_value=%s\nupdate_schedule=%s\n"
+                        % (self.corectrl_group, self.swap_value, self.commit_value,
+                           self.thp_value, self.schedule_value))
+            self.log("Config saved: %s" % path, "success")
+        except Exception as e:
+            QMessageBox.warning(self, APP_NAME, str(e))
 
     def closeEvent(self, e):
         if self.is_running:
