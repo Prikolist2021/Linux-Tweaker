@@ -36,11 +36,9 @@ jobs:
           python3 -m pip install --user appimage-builder
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-      # --- Создание иконки, если её нет в репозитории ---
       - name: Create placeholder icon (if missing)
         run: |
           if [ ! -f icon.png ]; then
-            # Простой зелёный квадрат с закруглением через ImageMagick
             convert -size 256x256 xc:none \
               -fill '#4ec9b0' -draw 'roundrectangle 20,20 236,236 60,60' \
               icon.png
@@ -48,6 +46,12 @@ jobs:
           else
             echo "icon.png already present, skipping"
           fi
+
+      - name: Debug — list files
+        run: |
+          pwd
+          ls -la
+          find . -maxdepth 2 -iname '*appimage*'
 
       - name: Build AppImage
         run: |
