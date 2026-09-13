@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Linux Tweaker v0.11
-Графическая оболочка тюнинга Linux Mint / Ubuntu / Debian на PyQt6.
+Linux Tweaker v0.11 (PyQt5)
+Графическая оболочка тюнинга Linux Mint / Ubuntu / Debian на PyQt5.
 RU/EN, светлая/тёмная тема, детект применённых настроек,
 откат, бэкапы, mount-опции, симлинки compatdata для Steam, отладочный лог.
 """
 import sys, os, re, subprocess, time, shutil, glob, pwd, grp, threading, traceback
 import faulthandler
-from PyQt6.QtCore import (Qt, QObject, QThread, pyqtSignal, QTimer,
+from PyQt5.QtCore import (Qt, QObject, QThread, pyqtSignal, QTimer,
                           QPropertyAnimation, QEasingCurve, QRect, QRectF)
-from PyQt6.QtGui import (QIcon, QPixmap, QPainter, QColor, QPen, QBrush,
+from PyQt5.QtGui import (QIcon, QPixmap, QPainter, QColor, QPen, QBrush,
                          QPainterPath, QLinearGradient, QTransform, QTextCursor)
-from PyQt6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget,
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget,
                              QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
                              QCheckBox, QLineEdit, QComboBox, QTextEdit,
                              QTextBrowser, QTableWidget, QTableWidgetItem,
@@ -132,6 +132,7 @@ CAT_ORDER = {
            "Convenience", "Updates"],
 }
 
+# Полные тексты помощи (без изменений) — оставлены как в оригинале
 OPTIONS_HELP = {
     "rsyslog": {
         "ru": "rsyslog — это программа, которая постоянно записывает подробные журналы системы в текстовые файлы на диске. Каждую секунду она дописывает туда события: запуск служб, ошибки, вход пользователей. На домашнем ПК эти файлы почти никто не читает, но диск получает постоянные операции записи.\n\nЕсли отключить rsyslog, диск перестанет получать эти лишние записи. Это особенно полезно на SSD, где каждая запись тратит ресурс ячейки. Освободится место в /var/log, и система будет работать чуть-чуть быстрее.\n\nНе отключайте, если вы привыкли разбираться с проблемами по старым файлам журналов. Правда, важные сообщения всё равно останутся — они идут в журнал systemd, который смотрится командой journalctl. То есть вы ничего критичного не теряете.\n\nОпция работает сразу после применения, перезагрузка не нужна. Откат — просто включение службы обратно.",
@@ -569,14 +570,16 @@ def find_steam_libraries(user_home):
                         sa = os.path.join(p, "steamapps")
                         if os.path.isdir(sa) and sa not in libs:
                             libs.append(sa)
-        except Exception:        # ← 8 пробелов, под try:
-            pass                 # ← 12 пробелов, тело except
+        except Exception:
+            pass
     for pat in ("/media/*/Steam/steamapps", "/mnt/*/Steam/steamapps",
                 "/run/media/*/*/Steam/steamapps"):
         for p in glob.glob(pat):
             if os.path.isdir(p) and p not in libs:
                 libs.append(p)
     return libs
+
+
 def lines_in(content):
     return content.splitlines()
 
@@ -596,31 +599,31 @@ def _gear_path(cx, cy, r):
 
 def make_icon(kind, size=48, accent="#4ec9b0", fg="#d4d4d4"):
     px = QPixmap(size, size)
-    px.fill(Qt.GlobalColor.transparent)
+    px.fill(Qt.transparent)
     p = QPainter(px)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setRenderHint(QPainter.Antialiasing)
     c = size / 2.0
     r = size * 0.36
     pen = QPen(QColor(fg), size * 0.09)
-    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setCapStyle(Qt.RoundCap)
     if kind == "logo":
         grad = QLinearGradient(0, 0, size, size)
         grad.setColorAt(0, QColor(accent))
         grad.setColorAt(1, QColor("#3aa794"))
-        p.setPen(Qt.PenStyle.NoPen)
+        p.setPen(Qt.NoPen)
         p.setBrush(grad)
         p.drawRoundedRect(2, 2, size - 4, size - 4, size * 0.24, size * 0.24)
         p.setBrush(QColor("#ffffff"))
-        p.setPen(Qt.PenStyle.NoPen)
+        p.setPen(Qt.NoPen)
         p.fillPath(_gear_path(c, c, r * 0.86), QBrush(QColor("#ffffff")))
     elif kind == "gear":
-        p.setPen(Qt.PenStyle.NoPen)
+        p.setPen(Qt.NoPen)
         p.fillPath(_gear_path(c, c, r), QBrush(QColor(accent)))
     elif kind == "services":
         p.setPen(pen)
         for i, y in enumerate((0.3, 0.5, 0.7)):
             p.drawLine(int(size * 0.2), int(size * y), int(size * 0.8), int(size * y))
-            p.setPen(Qt.PenStyle.NoPen)
+            p.setPen(Qt.NoPen)
             p.setBrush(QColor(accent))
             p.drawEllipse(int(size * (0.35 + 0.15 * i)) - 4, int(size * y) - 4, 8, 8)
             p.setPen(pen)
@@ -634,7 +637,7 @@ def make_icon(kind, size=48, accent="#4ec9b0", fg="#d4d4d4"):
         path.lineTo(size * 0.85, size * 0.5)
         p.drawPath(path)
     elif kind == "apply":
-        p.setPen(Qt.PenStyle.NoPen)
+        p.setPen(Qt.NoPen)
         p.setBrush(QColor(accent))
         p.drawEllipse(4, 4, size - 8, size - 8)
         p.setPen(QPen(QColor("#ffffff"), size * 0.12))
@@ -647,11 +650,11 @@ def make_icon(kind, size=48, accent="#4ec9b0", fg="#d4d4d4"):
         p.setPen(QPen(QColor(accent), size * 0.11))
         p.drawArc(int(size * 0.2), int(size * 0.2), int(size * 0.6), int(size * 0.6),
                   40 * 16, 260 * 16)
-        p.setPen(Qt.PenStyle.NoPen)
+        p.setPen(Qt.NoPen)
         p.setBrush(QColor(accent))
         p.drawEllipse(int(size * 0.62), int(size * 0.12), int(size * 0.2), int(size * 0.2))
     elif kind == "file":
-        p.setPen(Qt.PenStyle.NoPen)
+        p.setPen(Qt.NoPen)
         p.setBrush(QColor(accent))
         p.drawRoundedRect(int(size * 0.25), int(size * 0.15),
                           int(size * 0.5), int(size * 0.7), 4, 4)
@@ -659,14 +662,14 @@ def make_icon(kind, size=48, accent="#4ec9b0", fg="#d4d4d4"):
         for y in (0.35, 0.5, 0.65):
             p.drawLine(int(size * 0.35), int(size * y), int(size * 0.65), int(size * y))
     elif kind == "help":
-        p.setPen(Qt.PenStyle.NoPen)
+        p.setPen(Qt.NoPen)
         p.setBrush(QColor(accent))
         p.drawEllipse(4, 4, size - 8, size - 8)
         p.setPen(QPen(QColor("#ffffff"), size * 0.11))
         p.drawArc(int(size * 0.32), int(size * 0.24), int(size * 0.36), int(size * 0.36),
                   20 * 16, 200 * 16)
         p.drawLine(int(size * 0.5), int(size * 0.5), int(size * 0.5), int(size * 0.62))
-        p.setPen(Qt.PenStyle.NoPen)
+        p.setPen(Qt.NoPen)
         p.drawEllipse(int(size * 0.46), int(size * 0.68), int(size * 0.09), int(size * 0.09))
     elif kind == "close":
         p.setPen(QPen(QColor(accent), max(2, int(size * 0.14))))
@@ -2033,8 +2036,8 @@ class StripeProgress(QWidget):
 
     def paintEvent(self, e):
         p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setPen(Qt.PenStyle.NoPen)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(Qt.NoPen)
         th = self.theme_colors
         p.setBrush(QColor(th["bg"]))
         p.drawRoundedRect(self.rect(), 7, 7)
@@ -2076,10 +2079,10 @@ class LogoWidget(QWidget):
 
     def paintEvent(self, e):
         p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.Antialiasing)
         p.translate(self._size / 2, self._size / 2)
         p.rotate(self._angle)
-        p.setPen(Qt.PenStyle.NoPen)
+        p.setPen(Qt.NoPen)
         p.fillPath(_gear_path(0, 0, self._size * 0.42),
                    QBrush(QColor(self.theme_accent)))
         p.end()
@@ -2101,7 +2104,7 @@ class Toast(QFrame):
         self.setGraphicsEffect(self._eff)
         self._anim = QPropertyAnimation(self._eff, b"opacity", self)
         self._anim.setDuration(220)
-        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self.hide_anim)
@@ -2292,7 +2295,7 @@ class MainWindow(QMainWindow):
     def _ask_password(self, attempt):
         text, ok = QInputDialog.getText(self, self.t("sudo_title"),
                                         self.t("sudo_prompt") % attempt,
-                                        QLineEdit.EchoMode.Password)
+                                        QLineEdit.Password)
         return text if ok else None
 
     def _schedule_values(self):
@@ -2497,7 +2500,7 @@ class MainWindow(QMainWindow):
         self.terminal = QTextEdit()
         self.terminal.setReadOnly(True)
         self.terminal.setMaximumHeight(150)
-        self.terminal.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.terminal.setContextMenuPolicy(Qt.CustomContextMenu)
         self.terminal.customContextMenuRequested.connect(
             lambda p: self._menu_for(self.terminal, p))
         root.addWidget(self.terminal)
@@ -2552,7 +2555,7 @@ class MainWindow(QMainWindow):
         lay.addLayout(bar)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setFrameShape(QFrame.NoFrame)
         inner = QWidget()
         inner.setObjectName("optinner")
         vl = QVBoxLayout(inner)
@@ -2657,7 +2660,7 @@ class MainWindow(QMainWindow):
         if self.mount_items:
             vl.addSpacing(6)
             sep = QFrame()
-            sep.setFrameShape(QFrame.Shape.HLine)
+            sep.setFrameShape(QFrame.HLine)
             sep.setStyleSheet("color: %s;" % c["border"])
             vl.addWidget(sep)
             hh = QHBoxLayout()
@@ -2697,7 +2700,7 @@ class MainWindow(QMainWindow):
         if self.steam_items:
             vl.addSpacing(6)
             sep = QFrame()
-            sep.setFrameShape(QFrame.Shape.HLine)
+            sep.setFrameShape(QFrame.HLine)
             sep.setStyleSheet("color: %s;" % c["border"])
             vl.addWidget(sep)
             hh = QHBoxLayout()
@@ -2752,16 +2755,16 @@ class MainWindow(QMainWindow):
         self.table.setHorizontalHeaderLabels([self.t("svc_name"), self.t("svc_state"),
                                               self.t("svc_run"), self.t("svc_desc"),
                                               self.t("svc_help")])
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         hh = self.table.horizontalHeader()
-        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
-        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
-        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
-        hh.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        hh.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+        hh.setSectionResizeMode(0, QHeaderView.Interactive)
+        hh.setSectionResizeMode(1, QHeaderView.Interactive)
+        hh.setSectionResizeMode(2, QHeaderView.Interactive)
+        hh.setSectionResizeMode(3, QHeaderView.Stretch)
+        hh.setSectionResizeMode(4, QHeaderView.Fixed)
         self.table.setColumnWidth(0, 240)
         self.table.setColumnWidth(1, 140)
         self.table.setColumnWidth(2, 110)
@@ -2775,7 +2778,7 @@ class MainWindow(QMainWindow):
         self.serv_detail = QTextEdit()
         self.serv_detail.setReadOnly(True)
         self.serv_detail.setMaximumHeight(80)
-        self.serv_detail.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.serv_detail.setContextMenuPolicy(Qt.CustomContextMenu)
         self.serv_detail.customContextMenuRequested.connect(
             lambda p: self._menu_for(self.serv_detail, p))
         lay.addWidget(self.serv_detail)
@@ -2789,11 +2792,11 @@ class MainWindow(QMainWindow):
         b = QPushButton(self.t("stat_refresh"))
         b.setIcon(QIcon(make_icon("status", 32, c["green"])))
         b.clicked.connect(lambda: self._spawn_task(self._status_work))
-        lay.addWidget(b, 0, Qt.AlignmentFlag.AlignLeft)
+        lay.addWidget(b, 0, Qt.AlignLeft)
         self.stat_view = QTextEdit()
         self.stat_view.setReadOnly(True)
         self.stat_view.setStyleSheet("font-size: 15px;")
-        self.stat_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.stat_view.setContextMenuPolicy(Qt.CustomContextMenu)
         self.stat_view.customContextMenuRequested.connect(
             lambda p: self._menu_for(self.stat_view, p))
         lay.addWidget(self.stat_view, 1)
@@ -2806,7 +2809,7 @@ class MainWindow(QMainWindow):
         a2.triggered.connect(lambda: QApplication.clipboard().setText(w.toPlainText()))
         a3 = menu.addAction(self.t("menu_select_all"))
         a3.triggered.connect(lambda: w.selectAll())
-        menu.exec(w.mapToGlobal(pos))
+        menu.exec_(w.mapToGlobal(pos))
 
     def _copy_sel(self, w):
         cur = w.textCursor()
@@ -2847,7 +2850,7 @@ class MainWindow(QMainWindow):
         te = QTextBrowser()
         te.setReadOnly(True)
         te.setOpenExternalLinks(True)
-        te.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        te.setContextMenuPolicy(Qt.CustomContextMenu)
         te.customContextMenuRequested.connect(lambda p, w=te: self._menu_for(w, p))
         te.setHtml(html)
         vl.addWidget(te)
@@ -2857,7 +2860,7 @@ class MainWindow(QMainWindow):
         cb.clicked.connect(dlg.close)
         bb.addWidget(cb)
         vl.addLayout(bb)
-        dlg.exec()
+        dlg.exec_()
 
     def show_about(self):
         dlg = QDialog(self)
@@ -2869,7 +2872,7 @@ class MainWindow(QMainWindow):
         te = QTextBrowser()
         te.setReadOnly(True)
         te.setOpenExternalLinks(True)
-        te.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        te.setContextMenuPolicy(Qt.CustomContextMenu)
         te.customContextMenuRequested.connect(lambda p, w=te: self._menu_for(w, p))
         html = ('<div style="font-family: monospace;">'
                 '<h2>%s v%s</h2>'
@@ -2888,7 +2891,7 @@ class MainWindow(QMainWindow):
         cb.clicked.connect(dlg.close)
         bb.addWidget(cb)
         vl.addLayout(bb)
-        dlg.exec()
+        dlg.exec_()
 
     def _open_path(self, path):
         ops = SystemOps(self.sudo, self.state, lambda m, t: None, True)
@@ -2904,19 +2907,19 @@ class MainWindow(QMainWindow):
         te = QTextEdit()
         te.setReadOnly(True)
         te.setPlainText(content)
-        te.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        te.setContextMenuPolicy(Qt.CustomContextMenu)
         te.customContextMenuRequested.connect(lambda p: self._menu_for(te, p))
         vl.addWidget(te)
         b = QPushButton(self.t("viewer_ext"))
         b.clicked.connect(lambda: self._open_ext(path))
-        vl.addWidget(b, 0, Qt.AlignmentFlag.AlignLeft)
+        vl.addWidget(b, 0, Qt.AlignLeft)
         bb = QHBoxLayout()
         bb.addStretch(1)
         cb = QPushButton(self.t("btn_close"))
         cb.clicked.connect(dlg.close)
         bb.addWidget(cb)
         vl.addLayout(bb)
-        dlg.exec()
+        dlg.exec_()
 
     def _open_ext(self, path):
         prefix = []
@@ -3300,8 +3303,7 @@ class MainWindow(QMainWindow):
             "zram": ops.path_exists("/etc/systemd/zram-generator.conf")
                     and zram_generator_present(),
             "zswap": "zswap.enabled=1" in grub,
-            "thp": (self._thp_current() == self.thp_value)
-                    or bool(re.search(r"transparent_hugepage=%s\b" % self.thp_value, grub)),
+            "thp": bool(re.search(r"transparent_hugepage=%s\b" % self.thp_value, grub)),
             "sysctl_cache": bool(re.search(r"^vm\.vfs_cache_pressure=50$", sysc, re.M))
                             or sv("vm.vfs_cache_pressure") == "50",
             "sysctl_numa": bool(re.search(r"^kernel\.numa_balancing=0$", sysc, re.M))
@@ -3615,13 +3617,13 @@ class MainWindow(QMainWindow):
         c = self.colors()
         colors = {"normal": c["terminal_fg"], "success": c["green"], "error": c["red"],
                   "warning": c["yellow"], "info": c["blue"], "highlight": c["orange"]}
-        self.terminal.moveCursor(QTextCursor.MoveOperation.End)
+        self.terminal.moveCursor(QTextCursor.End)
         for line in msg.split("\n"):
             esc = (line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
             self.terminal.insertHtml("<span style='color:%s;'>%s</span>"
                                      % (colors.get(tag, c["terminal_fg"]), esc))
             self.terminal.insertPlainText("\n")
-        self.terminal.moveCursor(QTextCursor.MoveOperation.End)
+        self.terminal.moveCursor(QTextCursor.End)
 
     def _on_statusbar(self, s):
         self.status_lbl.setText(s)
@@ -3660,7 +3662,7 @@ class MainWindow(QMainWindow):
                 it = QTableWidgetItem(val)
                 it.setForeground(QColor(c[col]))
                 if ci == 4:
-                    it.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    it.setTextAlignment(Qt.AlignCenter)
                     it.setForeground(QColor(c["blue"]))
                 self.table.setItem(row, ci, it)
             self.table.item(row, 0).setToolTip(n)
@@ -3704,7 +3706,7 @@ class MainWindow(QMainWindow):
         self.build_ui()
         if hist:
             self.terminal.setPlainText(hist)
-            self.terminal.moveCursor(QTextCursor.MoveOperation.End)
+            self.terminal.moveCursor(QTextCursor.End)
         self._update_badges()
         self._spawn_task(self._services_work)
         self._spawn_task(self._status_work)
@@ -3746,7 +3748,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, e):
         if self.is_running:
             r = QMessageBox.question(self, APP_NAME, self.t("msg_close"))
-            if r != QMessageBox.StandardButton.Yes:
+            if r != QMessageBox.Yes:
                 e.ignore()
                 return
         with self._debug_lock:
@@ -3814,7 +3816,7 @@ def main():
     app.setApplicationName(APP_NAME)
     win = MainWindow()
     win.show()
-    sys.exit(app.exec())
+    sys.exit(app.exec_())
 
 
 if __name__ == "__main__":
