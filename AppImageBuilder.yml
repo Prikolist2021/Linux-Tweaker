@@ -1,14 +1,10 @@
 version: 1
 
 script:
-  # Чистим предыдущую сборку
   - rm -rf AppDir || true
-  # Создаём структуру каталогов
   - mkdir -p AppDir/usr/src
   - mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
-  # Копируем основной скрипт
   - cp linux_tweaker.py AppDir/usr/src/main.py
-  # Копируем иконку
   - cp icon.png AppDir/usr/share/icons/hicolor/256x256/apps/linux-tweaker.png
 
 AppDir:
@@ -31,9 +27,10 @@ AppDir:
       - python3-pyqt5
     exclude: []
 
-  env:
-    PYTHONHOME: '${APPDIR}/usr'
-    PYTHONPATH: '${APPDIR}/usr/lib/python3/dist-packages'
+  runtime:
+    env:
+      PYTHONHOME: '${APPDIR}/usr'
+      PYTHONPATH: '${APPDIR}/usr/lib/python3/dist-packages'
 
 AppImage:
   arch: x86_64
