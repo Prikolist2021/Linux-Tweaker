@@ -1,25 +1,42 @@
-name: Build AppImage Online
+name: Build AppImage
 
 on:
-  workflow_dispatch:
   push:
-    branches: [ "main" ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04   # старая glibc = совместимость со старым железом
     steps:
-      - name: Checkout files
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Fix Windows line endings
-        run: sed -i 's/\r$//' build_appimage.sh
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-pip python3-pyqt5 libfuse2 fuse
+          python3 -m pip install --upgrade pip pyinstaller
 
-      - name: Build AppImage
-        run: bash build_appimage.sh
+      - name: Build binary
+        run: pyinstaller --onefile --windowed --name LinuxTweaker linux_tweaker.py
 
-      - name: Save finished AppImage
-        uses: actions/upload-artifact@v4
+      - name: Pack AppImage
+        run: |
+          mkdir -p AppDir/usr/bin
+          cp dist/LinuxTweaker AppDir/usr/bin/
+          printf '#!/bin/bash\nHERE="$(dirname "$(readlink -f "$0")")"\nexec "$HERE/usr/bin/LinuxTweaker" "$@"\n' > AppDir/AppRun
+          chmod +x AppDir/AppRun
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+          ./appimagetool-x86_64.AppImage AppDir LinuxTweaker-x86_64.AppImage
+
+      - uses: actions/upload-artifact@v4
         with:
-          name: SystemTuneup-AppImage
+          name: LinuxTweaker-x86_64.AppImage
           path: LinuxTweaker-x86_64.AppImage
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: LinuxTweaker-x86_64.AppImage
