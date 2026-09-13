@@ -1,11 +1,9 @@
 name: Build AppImage
 
 on:
-  # Запуск при создании тега (релиза)
   push:
     tags:
       - 'v*'
-  # Возможность запустить вручную из интерфейса GitHub
   workflow_dispatch:
 
 permissions:
@@ -24,41 +22,37 @@ jobs:
         with:
           python-version: '3.10'
 
-      # appimage-builder требует много зависимостей, устанавливаем
-      - name: Install appimage-builder
+      - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             python3-pip python3-setuptools python3-venv \
+            python3-pyqt5 \
             desktop-file-utils libgdk-pixbuf2.0-dev fakeroot \
-            fuse libfuse2
+            fuse libfuse2 imagemagick
+
+      - name: Install appimage-builder
+        run: |
           python3 -m pip install --user appimage-builder
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-      # Создаём простую иконку, если её нет в репозитории
+      # --- Создание иконки, если её нет в репозитории ---
       - name: Create placeholder icon (if missing)
         run: |
           if [ ! -f icon.png ]; then
-            # Генерируем простую PNG через Python (или скачайте свою)
-            python3 -c "
-          from PyQt5.QtGui import QPixmap, QPainter, QColor
-          from PyQt5.QtCore import Qt
-          img = QPixmap(256, 256)
-          img.fill(Qt.transparent)
-          p = QPainter(img)
-          p.setBrush(QColor('#4ec9b0'))
-          p.setPen(Qt.NoPen)
-          p.drawRoundedRect(20, 20, 216, 216, 60, 60)
-          p.end()
-          img.save('icon.png')
-          "
+            # Простой зелёный квадрат с закруглением через ImageMagick
+            convert -size 256x256 xc:none \
+              -fill '#4ec9b0' -draw 'roundrectangle 20,20 236,236 60,60' \
+              icon.png
+            echo "Placeholder icon.png created"
+          else
+            echo "icon.png already present, skipping"
           fi
 
       - name: Build AppImage
         run: |
           appimage-builder --recipe AppImageBuilder.yml
 
-      # Проверяем, что файл создался
       - name: List generated files
         run: ls -la *.AppImage
 
@@ -68,7 +62,6 @@ jobs:
           name: Linux-Tweaker-AppImage
           path: ./*.AppImage
 
-      # Если это тег, создаём релиз и прикрепляем AppImage
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
