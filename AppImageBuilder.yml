@@ -1,0 +1,40 @@
+version: 1
+
+script:
+  # Чистим предыдущую сборку
+  - rm -rf AppDir || true
+  # Создаём структуру каталогов
+  - mkdir -p AppDir/usr/src
+  - mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
+  # Копируем основной скрипт
+  - cp linux_tweaker.py AppDir/usr/src/main.py
+  # Копируем иконку
+  - cp icon.png AppDir/usr/share/icons/hicolor/256x256/apps/linux-tweaker.png
+
+AppDir:
+  path: ./AppDir
+  app_info:
+    id: org.prikolist2021.linux-tweaker
+    name: Linux Tweaker
+    icon: linux-tweaker
+    version: 0.11
+    exec: usr/bin/python3
+    exec_args: "$APPDIR/usr/src/main.py $@"
+
+  apt:
+    arch: amd64
+    sources:
+      - sourceline: 'deb [arch=amd64] http://archive.ubuntu.com/ubuntu/ jammy main restricted universe multiverse'
+        key_url: 'http://keyserver.ubuntu.com/pks/lookup?op=get&search=0x871920D1991BC93C'
+    include:
+      - python3
+      - python3-pyqt5
+    exclude: []
+
+  env:
+    PYTHONHOME: '${APPDIR}/usr'
+    PYTHONPATH: '${APPDIR}/usr/lib/python3/dist-packages'
+
+AppImage:
+  arch: x86_64
+  update-information: 'gh-releases-zsync|Prikolist2021|Linux-Tweaker|latest|Linux-Tweaker-*x86_64.AppImage.zsync'
