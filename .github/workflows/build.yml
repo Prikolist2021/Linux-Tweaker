@@ -1,71 +1,77 @@
 name: Build AppImage
 
 on:
+  # Запуск при создании тега (релиза)
   push:
     tags:
       - 'v*'
+  # Возможность запустить вручную из интерфейса GitHub
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-22.04
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: Install dependencies
+      # appimage-builder требует много зависимостей, устанавливаем
+      - name: Install appimage-builder
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3-pip libfuse2 fuse wget
-          python3 -m pip install --upgrade pip pyinstaller
+          sudo apt-get install -y \
+            python3-pip python3-setuptools python3-venv \
+            desktop-file-utils libgdk-pixbuf2.0-dev fakeroot \
+            fuse libfuse2
+          python3 -m pip install --user appimage-builder
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-      - name: Build binary with PyInstaller
-        run: pyinstaller --onefile --windowed --name LinuxTweaker linux_tweaker.py
-
-      - name: Prepare AppDir and pack AppImage
+      # Создаём простую иконку, если её нет в репозитории
+      - name: Create placeholder icon (if missing)
         run: |
-          mkdir -p AppDir/usr/bin
-          cp dist/LinuxTweaker AppDir/usr/bin/
+          if [ ! -f icon.png ]; then
+            # Генерируем простую PNG через Python (или скачайте свою)
+            python3 -c "
+          from PyQt5.QtGui import QPixmap, QPainter, QColor
+          from PyQt5.QtCore import Qt
+          img = QPixmap(256, 256)
+          img.fill(Qt.transparent)
+          p = QPainter(img)
+          p.setBrush(QColor('#4ec9b0'))
+          p.setPen(Qt.NoPen)
+          p.drawRoundedRect(20, 20, 216, 216, 60, 60)
+          p.end()
+          img.save('icon.png')
+          "
+          fi
 
-          cat > AppDir/AppRun << 'EOF'
-          #!/bin/bash
-          HERE="$(dirname "$(readlink -f "$0")")"
-          exec "$HERE/usr/bin/LinuxTweaker" "$@"
-          EOF
-          chmod +x AppDir/AppRun
+      - name: Build AppImage
+        run: |
+          appimage-builder --recipe AppImageBuilder.yml
 
-          cat > AppDir/linux-tweaker.desktop << 'EOF'
-          [Desktop Entry]
-          Name=Linux Tweaker
-          Comment=Graphical tuning shell for Linux Mint / Ubuntu / Debian
-          Exec=LinuxTweaker
-          Icon=linux-tweaker
-          Type=Application
-          Categories=System;Settings;
-          Terminal=false
-          EOF
+      # Проверяем, что файл создался
+      - name: List generated files
+        run: ls -la *.AppImage
 
-          touch AppDir/linux-tweaker.png
-
-          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
-          chmod +x appimagetool-x86_64.AppImage
-          ./appimagetool-x86_64.AppImage AppDir LinuxTweaker-x86_64.AppImage
-
-      - name: Upload AppImage artifact
+      - name: Upload AppImage as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LinuxTweaker-AppImage
-          path: LinuxTweaker-x86_64.AppImage
+          name: Linux-Tweaker-AppImage
+          path: ./*.AppImage
 
-      - name: Create GitHub Release
+      # Если это тег, создаём релиз и прикрепляем AppImage
+      - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v1
         with:
-          files: LinuxTweaker-x86_64.AppImage
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          files: ./*.AppImage
+          generate_release_notes: true
