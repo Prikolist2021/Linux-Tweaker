@@ -25,8 +25,7 @@ jobs:
           python3 -m pip install --upgrade pip pyinstaller
 
       - name: Build binary with PyInstaller
-        run: |
-          pyinstaller --onefile --windowed --name LinuxTweaker linux_tweaker.py
+        run: pyinstaller --onefile --windowed --name LinuxTweaker linux_tweaker.py
 
       - name: Prepare AppDir and pack AppImage
         run: |
