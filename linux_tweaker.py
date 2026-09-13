@@ -3300,7 +3300,8 @@ class MainWindow(QMainWindow):
             "zram": ops.path_exists("/etc/systemd/zram-generator.conf")
                     and zram_generator_present(),
             "zswap": "zswap.enabled=1" in grub,
-            "thp": bool(re.search(r"transparent_hugepage=%s\b" % self.thp_value, grub)),
+            "thp": (self._thp_current() == self.thp_value)
+                    or bool(re.search(r"transparent_hugepage=%s\b" % self.thp_value, grub)),
             "sysctl_cache": bool(re.search(r"^vm\.vfs_cache_pressure=50$", sysc, re.M))
                             or sv("vm.vfs_cache_pressure") == "50",
             "sysctl_numa": bool(re.search(r"^kernel\.numa_balancing=0$", sysc, re.M))
