@@ -5,6 +5,8 @@ Linux Tweaker v0.11 (PyQt5)
 Графическая оболочка тюнинга Linux Mint / Ubuntu / Debian на PyQt5.
 RU/EN, светлая/тёмная тема, детект применённых настроек,
 откат, бэкапы, mount-опции, симлинки compatdata для Steam, отладочный лог.
+
+Лицензия: MIT
 """
 import sys, os, re, subprocess, time, shutil, glob, pwd, grp, threading, traceback
 import faulthandler
@@ -22,7 +24,136 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget,
 
 APP_NAME = "Linux Tweaker"
 APP_VERSION = "0.11"
-GITHUB_URL = "https://github.com/Prikolist2021/Linux-Tweaker"
+APP_BUILD_DATE = "15.09.2026"
+GITHUB_URL = "https://github.com/Prikolist2021/LinuxMint_Tweaker"
+LICENSE_NAME = "MIT"
+
+COMMIT_OK_FS = {"ext2", "ext3", "ext4"}
+LOCK_FILE = os.path.join(os.path.expanduser("~"), ".linux-tweaker.lock")
+
+
+def acquire_lock():
+    """True, если это единственная копия приложения."""
+    if os.path.exists(LOCK_FILE):
+        try:
+            with open(LOCK_FILE, "r") as f:
+                old_pid = int(f.read().strip())
+            os.kill(old_pid, 0)
+            return False
+        except (ValueError, ProcessLookupError, PermissionError):
+            pass
+        except Exception:
+            pass
+    try:
+        with open(LOCK_FILE, "w") as f:
+            f.write(str(os.getpid()))
+    except Exception:
+        pass
+    return True
+
+
+def release_lock():
+    try:
+        if os.path.exists(LOCK_FILE):
+            with open(LOCK_FILE, "r") as f:
+                pid = int(f.read().strip())
+            if pid == os.getpid():
+                os.remove(LOCK_FILE)
+    except Exception:
+        pass
+
+
+def fs_supports_commit(fstype):
+    """commit= понимают только ext2/ext3/ext4."""
+    return (fstype or "").lower() in COMMIT_OK_FS
+
+
+def _is_removable_device(dev):
+    """True, если устройство — сменный носитель (USB-флешка, картридер)."""
+    try:
+        base = os.path.basename(dev)
+        m = re.match(r"^(sd[a-z]+|hd[a-z]+|vd[a-z]+|nvme\d+n\d+|mmcblk\d+)", base)
+        if not m:
+            return False
+        disk = m.group(1)
+        rm_path = "/sys/block/%s/removable" % disk
+        if os.path.exists(rm_path):
+            with open(rm_path, "r") as f:
+                return f.read().strip() == "1"
+    except Exception:
+        pass
+    return False
+
+
+ZFS_UNITS = [
+    "zfs-import-cache.service",
+    "zfs-load-module.service",
+    "zfs-mount.service",
+    "zfs-share.service",
+    "zfs-volume-wait.service",
+    "zfs-import.target",
+    "zfs.target",
+    "zfs-volumes.target",
+]
+
+
+def zfs_packages_installed():
+    """True, если установлен хотя бы один из ключевых пакетов ZFS."""
+    for pkg in ("zfsutils-linux", "zfs-zed"):
+        try:
+            r = subprocess.run(["dpkg-query", "-W", "-f=${Status}", pkg],
+                               capture_output=True, text=True, timeout=5)
+            if r.returncode == 0 and "install ok installed" in r.stdout:
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def zfs_in_use():
+    """True, если ZFS реально используется (пулы, монтирования, fstab)."""
+    try:
+        r = subprocess.run(["zpool", "list", "-H", "-o", "name"],
+                           capture_output=True, text=True, timeout=5)
+        if r.returncode == 0 and r.stdout.strip():
+            return True
+    except Exception:
+        pass
+    try:
+        r = subprocess.run(["findmnt", "-t", "zfs", "-n", "-o", "TARGET"],
+                           capture_output=True, text=True, timeout=5)
+        if r.returncode == 0 and r.stdout.strip():
+            return True
+    except Exception:
+        pass
+    for path in ("/etc/fstab", "/etc/crypttab"):
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                if "zfs" in f.read().lower():
+                    return True
+        except Exception:
+            pass
+    return False
+
+
+def zfs_units_masked():
+    """True, если все ZFS-юниты замаскированы."""
+    masked = 0
+    present = 0
+    for unit in ZFS_UNITS:
+        try:
+            r = subprocess.run(["systemctl", "is-enabled", unit],
+                               capture_output=True, text=True, timeout=5)
+            state = r.stdout.strip()
+            if state in ("", "not-found"):
+                continue
+            present += 1
+            if state == "masked":
+                masked += 1
+        except Exception:
+            continue
+    return present > 0 and masked == present
+
 
 THEMES = {
     "light": {"bg": "#f5f5f5", "panel": "#ffffff", "fg": "#1e1e1e", "gray": "#616161",
@@ -61,6 +192,12 @@ OPTIONS_META = {
     "nmi_watchdog": {
         "ru": ("nmi_watchdog=0 (GRUB)", "Отключает служебные прерывания отладки. Убирает микро-фризы в играх. Нужна перезагрузка.", "Ядро и загрузка", "прерывания отладки"),
         "en": ("nmi_watchdog=0 (GRUB)", "Disables debug interrupts. Removes micro-stutters in games. Needs reboot.", "Kernel & boot", "debug interrupts")},
+    "itco_wdt": {
+        "ru": ("iTCO_wdt blacklist", "Дополнительный способ заглушить NMI watchdog, если параметр ядра не сработал. Модуль iTCO_wdt включает watchdog заново после загрузки. Работает только на Intel. Нужна перезагрузка.", "Ядро и загрузка", "Intel watchdog"),
+        "en": ("iTCO_wdt blacklist", "Extra step to silence NMI watchdog when the kernel parameter did not help. Intel only. Needs reboot.", "Kernel & boot", "Intel watchdog")},
+    "zfs_services": {
+        "ru": ("ZFS: отключение и удаление", "Останавливает и маскирует ZFS-службы — они перестают участвовать в загрузке. Кнопка дополнительно удаляет zfsutils-linux и zfs-zed. Доступна только если ZFS-пулы не найдены.", "Ядро и загрузка", "службы ZFS"),
+        "en": ("ZFS: disable and remove", "Stops and masks ZFS services so they no longer take part in boot. The button additionally removes zfsutils-linux and zfs-zed. Available only if no ZFS pools are found.", "Kernel & boot", "ZFS services")},
     "corectrl": {
         "ru": ("CoreCtrl (Polkit)", "Разрешает управлять вентиляторами и частотами AMD без пароля. Работает сразу.", "Видеокарта и графика", "управление AMD без пароля"),
         "en": ("CoreCtrl (Polkit)", "Allows controlling AMD fans and clocks without a password. Works immediately.", "GPU & graphics", "AMD control without password")},
@@ -113,14 +250,14 @@ OPTIONS_META = {
         "ru": ("ntfs3 драйвер", "Включает быстрый драйвер NTFS-дисков вместо медленного. ВНИМАНИЕ: только если у вас есть NTFS-диски. Нужна перезагрузка.", "Диски и файловые системы", "быстрый NTFS"),
         "en": ("ntfs3 driver", "Enables the fast NTFS driver instead of the slow one. WARNING: only if you have NTFS disks. Needs reboot.", "Drives & filesystems", "fast NTFS")},
     "commit": {
-        "ru": ("commit=NN (fstab)", "Реже сбрасывает служебную информацию на диск, меньше износа SSD. ВНИМАНИЕ: при сбое питания возможна потеря последних записей. Нужна перезагрузка.", "Диски и файловые системы", "реже запись на диск"),
-        "en": ("commit=NN (fstab)", "Flushes disk metadata less often, less SSD wear. WARNING: power loss may lose last writes. Needs reboot.", "Drives & filesystems", "less disk writing")},
+        "ru": ("commit=NN (fstab, только ext3/ext4)", "Реже сбрасывает служебную информацию на диск, меньше износа SSD. Работает ТОЛЬКО на ext3/ext4 — для NTFS, FAT32, exFAT, btrfs, xfs параметр не поддерживается и приведёт к ошибке монтирования. ВНИМАНИЕ: при сбое питания возможна потеря последних записей. Нужна перезагрузка.", "Диски и файловые системы", "реже запись на ext4"),
+        "en": ("commit=NN (fstab, ext3/ext4 only)", "Flushes disk metadata less often, less SSD wear. Works ONLY on ext3/ext4 — NTFS, FAT32, exFAT, btrfs, xfs do not support it and will fail to mount. WARNING: power loss may lose last writes. Needs reboot.", "Drives & filesystems", "less ext4 disk writing")},
     "aliases": {
         "ru": ("Команды в .bashrc", "Добавляет удобные команды терминала для обновления и очистки. Работает в новых терминалах.", "Удобство", "команды терминала"),
         "en": ("Commands in .bashrc", "Adds handy terminal commands for updating and cleaning. Works in new terminals.", "Convenience", "terminal commands")},
     "autoupdate": {
-        "ru": ("Автообновления", "Сам обновляет систему и Flatpak по расписанию. ВНИМАНИЕ: отключите встроенное автообновление Mint. Работает сразу.", "Обновления", "автообновление по расписанию"),
-        "en": ("Auto-updates", "Auto-updates system and Flatpak on schedule. WARNING: disable Mint's built-in auto-update. Works immediately.", "Updates", "scheduled auto-update")},
+        "ru": ("Автообновления", "Сам обновляет систему и Flatpak по расписанию. При включении автоматически глушит apt-daily, apt-daily-upgrade и unattended-upgrades, чтобы не было двойной работы. ВНИМАНИЕ: отключите встроенное автообновление Mint. Работает сразу.", "Обновления", "автообновление по расписанию"),
+        "en": ("Auto-updates", "Auto-updates system and Flatpak on schedule. When enabled, automatically masks apt-daily, apt-daily-upgrade and unattended-upgrades to avoid double work. WARNING: disable Mint's built-in auto-update. Works immediately.", "Updates", "scheduled auto-update")},
 }
 
 CAT_ORDER = {
@@ -130,118 +267,6 @@ CAT_ORDER = {
     "en": ["GPU & graphics", "Kernel & boot", "System logs", "Sound", "Network",
            "Memory & swap", "Drives & filesystems", "Gaming & compatibility",
            "Convenience", "Updates"],
-}
-
-# Полные тексты помощи (без изменений) — оставлены как в оригинале
-OPTIONS_HELP = {
-    "rsyslog": {
-        "ru": "rsyslog — это программа, которая постоянно записывает подробные журналы системы в текстовые файлы на диске. Каждую секунду она дописывает туда события: запуск служб, ошибки, вход пользователей. На домашнем ПК эти файлы почти никто не читает, но диск получает постоянные операции записи.\n\nЕсли отключить rsyslog, диск перестанет получать эти лишние записи. Это особенно полезно на SSD, где каждая запись тратит ресурс ячейки. Освободится место в /var/log, и система будет работать чуть-чуть быстрее.\n\nНе отключайте, если вы привыкли разбираться с проблемами по старым файлам журналов. Правда, важные сообщения всё равно останутся — они идут в журнал systemd, который смотрится командой journalctl. То есть вы ничего критичного не теряете.\n\nОпция работает сразу после применения, перезагрузка не нужна. Откат — просто включение службы обратно.",
-        "en": "rsyslog is a program that constantly writes detailed system logs into text files on the disk. Every second it appends events: service starts, errors, user logins. On a home PC nobody reads these files, but the disk keeps getting write operations.\n\nIf you disable rsyslog, the disk stops receiving those extra writes. This is especially useful on an SSD, where every write wears out a memory cell. Space in /var/log frees up, and the system runs a bit faster.\n\nDo not disable it if you are used to troubleshooting by reading old log files. However, important messages still go to the systemd journal, which you can view with journalctl — so you are not losing anything critical.\n\nThe option applies immediately, no reboot needed. Rolling back simply re-enables the service.",
-    },
-    "journald": {
-        "ru": "Журнал systemd — это запись всех событий системы: запуск служб, ошибки, подключения устройств. Обычно он хранится на диске и со временем разрастается до сотен мегабайт.\n\nЭта опция переносит журнал в оперативную память и ограничивает его 50 мегабайтами. Диск перестаёт получать постоянные записи, а значит, меньше изнашивается. Особенно полезно на SSD и на домашнем ПК, где журнал почти никто не читает.\n\nНе включайте, если вы привыкли разбирать старые проблемы по логам: после перезагрузки журнал в памяти исчезнет. Если вам нужны долгосрочные записи — оставьте как есть.\n\nОпция применяется сразу, перезагрузка не нужна. Служба journald перезапустится, и журнал продолжит собираться в памяти. Откат удаляет ваши изменения и возвращает журнал на диск.",
-        "en": "The systemd journal records all system events: service starts, errors, device plugs. It usually lives on disk and grows to hundreds of megabytes over time.\n\nThis option moves the journal into RAM and caps it at 50 MB. The disk stops getting constant writes, which means less wear. It is especially useful on an SSD and on a home PC, where nobody reads the journal anyway.\n\nDo not enable it if you are used to troubleshooting by reading old logs: after a reboot the journal in RAM disappears. If you need long-term records, leave it as is.\n\nThe option applies immediately, no reboot needed. The journald service restarts itself, and the journal keeps collecting in memory. Rolling back removes your changes and puts the journal back on disk.",
-    },
-    "audit": {
-        "ru": "audit — это служба ядра, которая записывает каждое действие системы: какой процесс открыл файл, какой пользователь запустил программу. Такая детальная запись нужна в офисах и на серверах для безопасности, чтобы потом можно было расследовать инциденты.\n\nДома она не нужна. Каждый системный вызов превращается в запись в журнал, а это лишняя нагрузка на процессор и диск. Отключение убирает эти накладные расходы и немного ускоряет систему.\n\nНе отключайте, если вам действительно нужны журналы безопасности для проверок — например, в организации с требованиями по аудиту.\n\nПараметр audit=0 добавляется в загрузчик GRUB, поэтому изменения вступят в силу только после перезагрузки. Откат убирает параметр из GRUB автоматически, но тоже требует перезагрузки.",
-        "en": "audit is a kernel service that logs every system action: which process opened a file, which user started a program. Such detailed logging is needed in offices and on servers for security, so incidents can be investigated later.\n\nAt home it is unnecessary. Every system call turns into a log entry, which adds CPU and disk load. Disabling it removes this overhead and slightly speeds up the system.\n\nDo not disable it if you actually need security logs for audits — for example, in an organisation with compliance requirements.\n\nThe audit=0 parameter is added to the GRUB bootloader, so the change only takes effect after a reboot. Rolling back removes the parameter from GRUB automatically, but also requires a reboot.",
-    },
-    "raid": {
-        "ru": "RAID — это способ объединить несколько физических дисков в один логический. Например, два диска могут работать как один большой для скорости или для надёжности (если один выйдет из строя, данные сохранятся на другом). Если у вас в системе есть такое объединение — у вас RAID.\n\nЕсли RAID нет, при каждой загрузке ядро всё равно несколько секунд ищет массивы и не находит. Эти секунды можно сэкономить: параметр raid=noautodetect отключает поиск и ускоряет включение.\n\nВНИМАНИЕ: не включайте эту опцию, если вы используете RAID. Система перестанет находить ваши массивы при загрузке, и вы можете потерять доступ к данным. Если сомневаетесь — не включайте.\n\nПараметр добавляется в GRUB, поэтому изменения вступают в силу после перезагрузки. Откат убирает параметр из GRUB, тоже с перезагрузкой.",
-        "en": "RAID is a way to combine several physical disks into one logical one. For example, two disks can act as one big disk for speed, or for reliability (if one fails, the data stays on the other). If your system has such a combination — you have RAID.\n\nIf there is no RAID, the kernel still spends a few seconds at every boot probing for arrays and finding nothing. You can save those seconds: raid=noautodetect disables the probe and speeds up startup.\n\nWARNING: do not enable this option if you use RAID. The system will stop finding your arrays at boot, and you may lose access to your data. If in doubt — do not enable it.\n\nThe parameter is added to GRUB, so changes take effect after a reboot. Rolling back removes the parameter from GRUB, also with a reboot.",
-    },
-    "nmi_watchdog": {
-        "ru": "NMI-watchdog — это служебный механизм ядра для отладки зависаний. Он периодически посылает процессору специальные сигналы (немаскируемые прерывания), чтобы проверить, что система ещё жива. Если система не отвечает — ядро записывает это в журнал.\n\nНа домашнем ПК такая отладка не нужна. А периодические прерывания, пусть и редкие, дают микро-фризы в играх и чувствительных к задержкам задачах. Отключение убирает эти паузы.\n\nНе отключайте, если вы специально занимаетесь отладкой зависаний ядра и вам нужны эти данные.\n\nПараметр nmi_watchdog=0 добавляется в GRUB, поэтому изменения вступают в силу после перезагрузки. Откат убирает параметр и тоже требует перезагрузки.",
-        "en": "The NMI watchdog is a kernel debugging facility for detecting hangs. It periodically sends special signals to the CPU (non-maskable interrupts) to check that the system is still alive. If the system does not respond, the kernel writes it to the log.\n\nOn a home PC such debugging is unnecessary. And the periodic interrupts, even rare ones, cause micro-stutters in games and latency-sensitive tasks. Disabling them removes those pauses.\n\nDo not disable it if you specifically debug kernel hangs and need that data.\n\nThe nmi_watchdog=0 parameter is added to GRUB, so changes take effect after a reboot. Rolling back removes the parameter and also requires a reboot.",
-    },
-    "corectrl": {
-        "ru": "CoreCtrl — это программа для тонкой настройки видеокарт AMD. Она позволяет менять частоты, управлять вентиляторами, задавать лимиты питания и следить за температурой. Без неё видеокарта работает по стандартным профилям, а с ней можно выжать больше производительности или сделать систему тише.\n\nПо умолчанию все действия CoreCtrl требуют пароль администратора. Это неудобно: чтобы менять частоты, приходится каждый раз вводить пароль. Данная опция создаёт правило Polkit, которое разрешает вашей группе пользователей управлять видеокартой без пароля.\n\nНе включайте, если у вас не AMD или вы не пользуетесь CoreCtrl. В поле «Группа» укажите группу пользователей, которой разрешено управление. По умолчанию подставляется ваша группа.\n\nОпция работает сразу, перезагрузка не нужна. Откат удаляет правило Polkit.",
-        "en": "CoreCtrl is a tool for fine-tuning AMD graphics cards. It lets you change clocks, control fans, set power limits and monitor temperature. Without it the GPU runs on standard profiles; with it you can squeeze out more performance or make the system quieter.\n\nBy default every CoreCtrl action asks for the admin password. That is inconvenient: to change clocks you have to type the password each time. This option creates a Polkit rule that allows your user group to control the GPU without a password.\n\nDo not enable it if you do not have an AMD GPU or do not use CoreCtrl. In the Group field, specify the user group allowed to control the GPU. By default your own group is filled in.\n\nThe option applies immediately, no reboot needed. Rolling back removes the Polkit rule.",
-    },
-    "ppfeaturemask": {
-        "ru": "На старых ядрах драйвер amdgpu блокирует часть функций управления питанием видеокарты AMD. Это сделано в целях безопасности: некоторые режимы могут работать нестабильно на старых картах. Но именно эти режимы нужны для тонкой настройки частот через CoreCtrl.\n\nПараметр amdgpu.ppfeaturemask=0xffffffff снимает блокировку и открывает драйверу полный контроль над частотами и питанием. После этого CoreCtrl сможет менять всё, что вы захотите.\n\nНе включайте, если у вас не AMD или вы не собираетесь настраивать частоты. Также не стоит включать, если у вас очень старая карта — она может работать нестабильно.\n\nПараметр добавляется в GRUB, поэтому изменения вступают в силу после перезагрузки. Откат убирает параметр из GRUB, тоже с перезагрузкой.",
-        "en": "On older kernels the amdgpu driver blocks some AMD GPU power-management features. This is a safety measure: some modes can be unstable on old cards. But those are exactly the modes you need for fine-tuning clocks via CoreCtrl.\n\nThe parameter amdgpu.ppfeaturemask=0xffffffff lifts the block and gives the driver full control over clocks and power. After that CoreCtrl can change everything you want.\n\nDo not enable it if you do not have AMD or do not plan to tune clocks. Also do not enable it on a very old card — it may become unstable.\n\nThe parameter is added to GRUB, so changes take effect after a reboot. Rolling back removes the parameter from GRUB, also with a reboot.",
-    },
-    "nvidia_modeset": {
-        "ru": "Для проприетарного драйвера NVIDIA нужен специальный режим вывода видео — kernel modesetting (KMS). Без него система работает с устаревшим способом вывода, из-за чего не запускается Wayland, возможны проблемы при переключении видеорежимов и композитор может вести себя странно.\n\nПараметр nvidia-drm.modeset=1 включает современный режим KMS. После этого Wayland работает корректно, переключение между разрешениями экрана происходит плавно, анимации в системе не дёргаются.\n\nНе включайте, если у вас не NVIDIA. На системах с AMD или Intel этот параметр не имеет смысла.\n\nПараметр добавляется в GRUB, поэтому изменения вступают в силу после перезагрузки. Откат убирает параметр из GRUB, тоже с перезагрузкой.",
-        "en": "The proprietary NVIDIA driver needs a special video-output mode — kernel modesetting (KMS). Without it the system uses the legacy path, Wayland does not work, mode switching may glitch, and the compositor can misbehave.\n\nThe parameter nvidia-drm.modeset=1 enables modern KMS. After that Wayland works correctly, switching screen resolutions is smooth, and system animations do not stutter.\n\nDo not enable it if you do not have NVIDIA. On AMD or Intel systems this parameter is meaningless.\n\nThe parameter is added to GRUB, so changes take effect after a reboot. Rolling back removes the parameter from GRUB, also with a reboot.",
-    },
-    "vrr": {
-        "ru": "VRR (он же FreeSync или Adaptive Sync) — это переменная частота обновления монитора. Обычно монитор обновляется с фиксированной частотой, например 60 Гц. Если игра выдаёт 47 FPS, кадры попадают на разные обновления, и картинка «рвётся». С VRR монитор подстраивается под текущий FPS: сколько кадров — столько и обновлений.\n\nЭта опция включает VRR для видеокарт AMD в X11 с драйвером amdgpu. В играх пропадут разрывы картинки, движение станет плавным даже при нестабильном FPS.\n\nНе включайте, если у вас монитор без поддержки FreeSync, видеокарта не AMD, или вы работаете в Wayland. В Wayland VRR настраивается иначе.\n\nСоздаётся конфиг X11, для вступления в силу нужно перезайти в сеанс или перезагрузиться. Откат удаляет конфиг, тоже с перезаходом.",
-        "en": "VRR (also known as FreeSync or Adaptive Sync) is a variable monitor refresh rate. Normally the monitor refreshes at a fixed rate, say 60 Hz. If a game outputs 47 FPS, frames land on different refreshes and the picture tears. With VRR the monitor adapts to the current FPS: as many frames as refreshes.\n\nThis option enables VRR for AMD GPUs in X11 with the amdgpu driver. In games tearing disappears and motion stays smooth even at unstable FPS.\n\nDo not enable it if your monitor does not support FreeSync, your GPU is not AMD, or you run Wayland. In Wayland VRR is configured differently.\n\nAn X11 config is created; to apply it you need to re-login or reboot. Rolling back removes the config, also with a re-login.",
-    },
-    "radv": {
-        "ru": "SAM (Smart Access Memory) или Resizable BAR — это технология, при которой процессор получает доступ ко всей видеопамяти сразу, а не кусками по 256 МБ. Обычно это даёт небольшой прирост FPS в играх.\n\nПараметр RADV_PERFTEST=sam включает поддержку SAM в открытом драйвере RADV. Это прирост на несколько процентов в части игр, особенно на новых картах Radeon.\n\nНе включайте, если у вас не AMD, старая материнская плата без поддержки Resizable BAR, или вы работаете с драйвером NVIDIA.\n\nПеременная записывается в /etc/environment и применяется при входе в сеанс. Нужно перезайти в сеанс или перезагрузиться. Откат убирает переменную, тоже с перезаходом.",
-        "en": "SAM (Smart Access Memory) or Resizable BAR is a technology where the CPU gets access to all VRAM at once instead of chunks of 256 MB. It usually gives a small FPS gain in games.\n\nThe RADV_PERFTEST=sam parameter enables SAM support in the open RADV driver. This gives a few percent gain in some games, especially on newer Radeon cards.\n\nDo not enable it if you do not have AMD, have an old motherboard without Resizable BAR support, or use the NVIDIA driver.\n\nThe variable is written to /etc/environment and applies at login. You need to re-login or reboot. Rolling back removes the variable, also with a re-login.",
-    },
-    "mesa": {
-        "ru": "MESA — это набор графических библиотек, которые используют игры и программы для вывода картинки. Одна из функций MESA — кэширование скомпилированных шейдеров. Шейдер — это небольшая программа для видеокарты, которую нужно скомпилировать перед первым использованием.\n\nПо умолчанию кэш MESA небольшой, и когда он переполняется, старые шейдеры удаляются. При следующем запуске игры они компилируются заново — это и вызывает подтормаживания в первые минуты. Если увеличить кэш до 4 ГБ, шейдеры останутся, и игра будет запускаться сразу плавно.\n\nНе включайте, если вы не играете в игры с шейдерами (в основном это все современные игры). Для офисных задач разницы не будет.\n\nПеременная записывается в /etc/environment и применяется при входе в сеанс. Нужно перезайти или перезагрузиться.",
-        "en": "MESA is a set of graphics libraries that games and applications use to render the picture. One of MESA's features is caching compiled shaders. A shader is a small program for the GPU that must be compiled before first use.\n\nBy default the MESA cache is small, and when it overflows, old shaders are deleted. The next time you launch the game, they are recompiled — that is what causes stutters in the first minutes. If you raise the cache to 4 GB, shaders stay, and the game launches smoothly right away.\n\nDo not enable it if you do not play shader-heavy games (which is almost all modern games). For office tasks there is no difference.\n\nThe variable is written to /etc/environment and applies at login. You need to re-login or reboot.",
-    },
-    "pipewire": {
-        "ru": "PipeWire — это звуковой сервер, который передаёт звук от приложений к колонкам и наушникам. У него есть настройка размера буферов: маленькие буферы дают низкую задержку, но на некоторых системах вызывают треск и щелчки. Большие буферы убирают артефакты, но добавляют небольшую задержку (на практике незаметно).\n\nЭта опция увеличивает буферы PipeWire. Треск, щелчки и прерывистый звук в наушниках и колонках исчезают. Особенно заметно на встроенных звуковых картах и на некоторых USB-ЦАПах.\n\nНе включайте, если у вас нет проблем со звуком. Если звук работает нормально, не стоит ничего менять.\n\nСоздаётся конфиг в вашей домашней папке. Нужно перезайти в сеанс или перезагрузиться. Откат удаляет конфиг, тоже с перезаходом.",
-        "en": "PipeWire is the sound server that hands audio from applications to speakers and headphones. It has a buffer-size setting: small buffers give low latency but on some systems cause crackling and pops. Large buffers remove the artifacts but add a little latency (imperceptible in practice).\n\nThis option enlarges PipeWire buffers. Crackling, pops and stuttering in headphones and speakers disappear. Especially noticeable on built-in sound cards and some USB DACs.\n\nDo not enable it if you have no sound problems. If audio works fine, there is no reason to change anything.\n\nA config is created in your home folder. You need to re-login or reboot. Rolling back removes the config, also with a re-login.",
-    },
-    "bbr": {
-        "ru": "BBR — это современный алгоритм управления перегрузками TCP, разработанный Google. Он определяет, с какой скоростью отправлять данные по сети, чтобы не перегружать канал и не терять пакеты. Старый алгоритм CUBIC работает хорошо на стабильных каналах, но BBR выигрывает на нестабильных.\n\nЭта опция включает BBR и очередь fq. На Wi-Fi, VPN, мобильном интернете и дальних серверах скорость загрузки становится выше, а задержки — меньше. На стабильном кабеле разница почти не заметна.\n\nНе включайте, если у вас стабильный проводной интернет и вы не жалуетесь на задержки. BBR не сломает соединение, но и заметной выгоды не даст.\n\nПараметр применяется сразу, перезагрузка не нужна. Откат возвращает старый алгоритм CUBIC и тоже работает без перезагрузки.",
-        "en": "BBR is a modern TCP congestion-control algorithm developed by Google. It decides at what rate to send data over the network so the link is not overloaded and packets are not lost. The older CUBIC algorithm works well on stable links, but BBR wins on unstable ones.\n\nThis option enables BBR and the fq queue. On Wi-Fi, VPN, mobile internet and remote servers, download speed increases and latency drops. On a stable cable the difference is barely noticeable.\n\nDo not enable it if you have a stable wired internet connection and no latency complaints. BBR will not break the connection, but it will not bring noticeable benefit either.\n\nThe parameter applies immediately, no reboot needed. Rolling back restores the older CUBIC algorithm, also without a reboot.",
-    },
-    "swap": {
-        "ru": "Swap (подкачка) — это область на диске или в сжатой памяти, куда система складывает редко используемые данные, когда оперативной памяти не хватает. Насколько охотно система это делает — задаётся числом vm.swappiness от 0 до 200.\n\nВысокое значение (например, 150) означает: система активно переносит данные в swap, освобождая оперативную память. Это выгодно, если swap — это zram (сжатая память в ОЗУ), обращение к ней дешёвое. Низкое значение (10) означает: система старается держать данные в ОЗУ и обращается к диску только в крайнем случае. Это выгодно, если swap на диске или SSD — тогда диск меньше дёргается.\n\nНе включайте, если вас устраивает поведение по умолчанию (обычно 60). На современных системах с большим количеством ОЗУ разницы вы можете не заметить.\n\nПараметр применяется сразу через sysctl, перезагрузка не нужна. Откат возвращает значение 60.",
-        "en": "Swap is a region on disk or in compressed memory where the system stores rarely used data when RAM runs low. How eagerly it does this is controlled by vm.swappiness, a number from 0 to 200.\n\nA high value (say 150) means the system actively moves data to swap, freeing up RAM. This is good if swap is zram (compressed memory in RAM), because access is cheap. A low value (10) means the system tries to keep data in RAM and only touches the disk as a last resort. This is good if swap is on a disk or SSD — the disk is hit less often.\n\nDo not enable it if the default behaviour (usually 60) is fine for you. On modern systems with plenty of RAM you may not notice any difference.\n\nThe parameter applies immediately via sysctl, no reboot needed. Rolling back restores the value 60.",
-    },
-    "zram": {
-        "ru": "zram — это сжатая область в оперативной памяти, которую система использует как дополнительную память. Когда ОЗУ не хватает, данные не сбрасываются на диск, а сжимаются в памяти. Скорость обращения к сжатой памяти намного выше, чем к диску, а ресурс SSD не расходуется.\n\nЭта опция создаёт zram через пакет zram-generator. Если у вас мало ОЗУ (4–8 ГБ), система реже будет обращаться к диску при работе с большим количеством приложений. Это ускоряет работу и продлевает жизнь SSD.\n\nНе включайте, если у вас много оперативной памяти (16 ГБ и больше) — разницы вы не почувствуете. Также опция не имеет смысла, если пакет zram-generator не установлен. Установите его командой «sudo apt install zram-generator».\n\nКонфиг создаётся сразу, но устройство zram появится только после перезагрузки. Откат удаляет конфиг, тоже с перезагрузкой.",
-        "en": "zram is a compressed area in RAM used by the system as extra memory. When RAM runs low, data is not written to disk — it is compressed in memory. Accessing compressed memory is much faster than accessing the disk, and SSD wear is avoided.\n\nThis option sets up zram via the zram-generator package. If you have little RAM (4–8 GB), the system accesses the disk less often when many apps are running. This speeds up work and extends SSD life.\n\nDo not enable it if you have plenty of RAM (16 GB or more) — you will not feel a difference. Also it makes no sense if zram-generator is not installed. Install it with «sudo apt install zram-generator».\n\nThe config is created immediately, but the zram device only appears after a reboot. Rolling back removes the config, also with a reboot.",
-    },
-    "zswap": {
-        "ru": "zswap — это сжатый кэш в оперативной памяти, который стоит перед обычным swap. Когда системе нужно выгрузить страницу памяти, она сначала пробует сжать её и оставить в zswap. Только если zswap переполнен, данные уходят на диск.\n\nЭта опция включает zswap и задаёт компрессор zstd. Если у вас есть swap на диске и вы иногда сталкиваетесь с нехваткой памяти, zswap уменьшит количество обращений к диску. Система будет отзывчивее, а SSD — живее.\n\nНе включайте, если у вас нет swap или вы им никогда не пользуетесь. Также zswap не нужен, если у вас уже настроен zram (они делают похожие вещи).\n\nПараметры добавляются в GRUB, поэтому изменения вступают в силу после перезагрузки. Откат убирает их из GRUB, тоже с перезагрузкой.",
-        "en": "zswap is a compressed cache in RAM that sits in front of regular swap. When the system needs to swap out a page, it first tries to compress it and keep it in zswap. Only when zswap overflows does data go to disk.\n\nThis option enables zswap and sets the zstd compressor. If you have swap on disk and occasionally run out of memory, zswap reduces disk accesses. The system feels more responsive and the SSD lives longer.\n\nDo not enable it if you have no swap or never use it. Also zswap is unnecessary if you already use zram (they do similar things).\n\nThe parameters are added to GRUB, so changes take effect after a reboot. Rolling back removes them from GRUB, also with a reboot.",
-    },
-    "thp": {
-        "ru": "Память компьютера делится на страницы — небольшие кусочки. Обычно это страницы по 4 КБ. Когда программа работает с большими объёмами данных (игры, обработка фото, базы данных), системе приходится управлять миллионами таких мелких страниц, и это отнимает время.\n\nРежим THP (Transparent Huge Pages) позволяет выдавать память крупными страницами по 2 МБ. Управлять ими проще, поэтому игры и тяжёлые программы работают чуть быстрее. Есть три режима: always — выдавать крупные страницы всем, madvise — только тем программам, которые сами попросят (самый безопасный), never — не использовать вообще.\n\nРекомендуется значение madvise: оно даёт выгоду там, где нужно, и не мешает остальным. Режим always иногда вызывает лёгкие подтормаживания из-за дефрагментации памяти.\n\nПараметр добавляется в GRUB, поэтому изменения вступают в силу после перезагрузки. Откат убирает параметр, тоже с перезагрузкой.",
-        "en": "Computer memory is divided into pages — small chunks. Normally these are 4 KB pages. When a program works with large amounts of data (games, photo editing, databases), the system has to manage millions of such small pages, and that takes time.\n\nTHP (Transparent Huge Pages) mode lets the system hand out memory in large 2 MB pages. They are easier to manage, so games and heavy apps run slightly faster. There are three modes: always — hand out large pages to everyone, madvise — only to programs that explicitly ask (safest), never — do not use at all.\n\nThe recommended value is madvise: it gives a benefit where needed and does not interfere with the rest. always sometimes causes slight stutters due to memory defragmentation.\n\nThe parameter is added to GRUB, so changes take effect after a reboot. Rolling back removes the parameter, also with a reboot.",
-    },
-    "sysctl_cache": {
-        "ru": "Ядро Linux держит в оперативной памяти кэш файлов и папок — те данные, которые недавно читались с диска. Когда кэш переполняется, ядро освобождает его часть. Параметр vfs_cache_pressure говорит ядру, насколько агрессивно освобождать кэш.\n\nЗначение по умолчанию — 100. Опция ставит 50, то есть ядро будет освобождать кэш в два раза реже. Файлы и папки, которые вы недавно открывали, останутся в памяти дольше, и следующее открытие пройдёт быстрее. Особенно заметно, если вы работаете с большим количеством файлов — например, с фотоархивом или исходным кодом.\n\nНе включайте, если у вас мало оперативной памяти (меньше 4 ГБ) — кэш может вытеснить нужные данные работающих программ. При большом количестве ОЗУ эта опция безопасна и полезна.\n\nПараметр применяется сразу через sysctl, перезагрузка не нужна. Откат возвращает значение 100.",
-        "en": "The Linux kernel keeps a cache of files and folders in RAM — data recently read from disk. When the cache overflows, the kernel frees part of it. The vfs_cache_pressure parameter tells the kernel how aggressively to free the cache.\n\nThe default value is 100. This option sets 50, meaning the kernel will free the cache half as often. Files and folders you recently opened stay in memory longer, and the next open is faster. Especially noticeable if you work with many files — a photo archive or source code, for example.\n\nDo not enable it if you have little RAM (less than 4 GB) — the cache may push out data that running programs need. With plenty of RAM this option is safe and useful.\n\nThe parameter applies immediately via sysctl, no reboot needed. Rolling back restores the value 100.",
-    },
-    "sysctl_numa": {
-        "ru": "NUMA — это архитектура памяти на серверах с несколькими процессорами. На таких системах память физически разделена между процессорами, и доступ к «чужой» памяти медленнее. Ядро Linux автоматически переносит страницы памяти между процессорами, чтобы всем было хорошо. Это называется numa_balancing.\n\nНа домашнем ПК NUMA нет — процессор один (или память одна). Но механизм балансировки всё равно работает и создаёт микропаузы в работе, особенно в играх. Отключение этой балансировки убирает паузы.\n\nНе отключайте, если у вас настоящий сервер с NUMA и вы знаете, зачем он нужен. На домашних системах опция безопасна и полезна.\n\nПараметр применяется сразу через sysctl, перезагрузка не нужна. Откат возвращает значение 1 (включено).",
-        "en": "NUMA is a memory architecture on servers with several processors. On such systems, memory is physically split between CPUs, and accessing “foreign” memory is slower. The Linux kernel automatically moves memory pages between CPUs so everything runs well. This is called numa_balancing.\n\nA home PC has no NUMA — one CPU (or one memory pool). But the balancing mechanism still runs and causes micro-pauses, especially in games. Disabling this balancing removes the pauses.\n\nDo not disable it if you actually run a NUMA server and know why it matters. On home systems the option is safe and useful.\n\nThe parameter applies immediately via sysctl, no reboot needed. Rolling back restores the value 1 (enabled).",
-    },
-    "reisub": {
-        "ru": "Magic SysRq — это набор аварийных команд ядра, которые вызываются сочетанием Alt+PrtSc и определённой буквы. Они работают даже когда система полностью зависла и не реагирует ни на что. Самая полезная последовательность — R E I S U B.\n\nКаждая буква означает: R — вернуть управление клавиатуре из-под графики, E — вежливо завершить процессы, I — убить оставшиеся, S — синхронизировать данные с диском, U — перемонтировать диски в режим только для чтения, B — перезагрузиться. Нажимать их нужно по порядку, с интервалом 1–2 секунды, удерживая Alt+PrtSc.\n\nПосле такой последовательности система перезагружается безопасно, без риска повредить файлы. Это намного лучше, чем жёсткий сброс кнопкой питания. Не отключайте эту возможность, если у вас бывают зависания.\n\nПараметр применяется сразу через sysctl, перезагрузка не нужна. Откат возвращает стандартную маску 176 (отключены опасные функции).",
-        "en": "Magic SysRq is a set of emergency kernel commands triggered by Alt+PrtSc and a certain letter. They work even when the system is completely frozen and unresponsive. The most useful sequence is R E I S U B.\n\nEach letter means: R — reclaim keyboard from graphics, E — politely terminate processes, I — kill the rest, S — sync data to disk, U — remount disks read-only, B — reboot. Press them in order, 1–2 seconds apart, holding Alt+PrtSc.\n\nAfter that sequence the system reboots safely, with no risk of file corruption. It is much better than a hard reset with the power button. Do not disable this feature if your system hangs sometimes.\n\nThe parameter applies immediately via sysctl, no reboot needed. Rolling back restores the default mask 176 (dangerous functions disabled).",
-    },
-    "ntsync": {
-        "ru": "ntsync — это новый модуль ядра, который ускоряет синхронизацию потоков в Wine и Proton. Игры под Windows активно используют примитивы синхронизации (мьютексы, события, семафоры), и их реализация в Wine долго была медленной. ntsync делает её значительно быстрее.\n\nРезультат — заметный прирост FPS в некоторых играх, особенно в тех, где много потоков. Если у вас ядро 6.14 или новее (или патченное с ntsync), опция включит модуль и добавит его в автозагрузку.\n\nНе включайте, если у вас ядро старше 6.14 без патча — модуль просто не загрузится. Также не имеет смысла, если вы не играете под Wine и Proton.\n\nМодуль загружается сразу, перезагрузка не нужна. При этом автозагрузка при следующем включении тоже будет настроена. Откат удаляет файл автозагрузки, модуль останется загруженным до перезагрузки.",
-        "en": "ntsync is a new kernel module that speeds up thread synchronization in Wine and Proton. Windows games heavily use synchronization primitives (mutexes, events, semaphores), and their implementation in Wine was slow for a long time. ntsync makes it significantly faster.\n\nThe result is a noticeable FPS gain in some games, especially those with many threads. If you have kernel 6.14 or newer (or an ntsync-patched one), the option loads the module and adds it to autoload.\n\nDo not enable it if your kernel is older than 6.14 without a patch — the module simply will not load. Also it makes no sense if you do not play under Wine and Proton.\n\nThe module loads immediately, no reboot needed. Autoload for the next boot is also set up. Rolling back removes the autoload file; the module stays loaded until reboot.",
-    },
-    "ntfs3": {
-        "ru": "NTFS — это файловая система Windows. Linux умеет читать и писать на неё двумя способами: через старый медленный драйвер ntfs-3g в пользовательском пространстве и через новый быстрый ntfs3 внутри ядра. Второй в разы быстрее.\n\nLinux Mint по умолчанию блокирует ntfs3 и использует ntfs-3g. Причина историческая: раньше у ntfs3 были проблемы со стабильностью. Сейчас они исправлены, и ntfs3 работает надёжно. Эта опция снимает блокировку, и NTFS-диски начинают работать заметно быстрее.\n\nВНИМАНИЕ: не включайте, если у вас нет NTFS-дисков — эффекта не будет. Если у вас есть NTFS-диск с важными данными, сделайте резервную копию перед включением, просто на всякий случай.\n\nПосле снятия блокировки уже подключённые диски продолжат работать со старым драйвером, пока вы их не перемонтируете. Нужна перезагрузка или ручное перемонтирование. Откат возвращает блокировку.",
-        "en": "NTFS is the Windows file system. Linux can read and write it two ways: through the old slow ntfs-3g driver in userspace, and through the new fast ntfs3 driver inside the kernel. The second is much faster.\n\nLinux Mint blocks ntfs3 by default and uses ntfs-3g. The reason is historical: ntfs3 used to have stability issues. Those are fixed now, and ntfs3 works reliably. This option lifts the block, and NTFS disks start working noticeably faster.\n\nWARNING: do not enable it if you have no NTFS disks — there will be no effect. If you have an NTFS disk with important data, make a backup before enabling, just in case.\n\nAfter the block is lifted, already mounted disks keep using the old driver until you remount them. A reboot or manual remount is required. Rolling back restores the block.",
-    },
-    "commit": {
-        "ru": "Файловая система ext4 не пишет каждое изменение сразу на диск. Она собирает их в оперативной памяти и сбрасывает раз в 5 секунд по умолчанию — это параметр commit. Такой подход экономит ресурс диска и ускоряет запись.\n\nЭта опция увеличивает интервал сброса. Если поставить, скажем, 120 секунд, диск будет дёргаться реже, и SSD проживёт дольше. При этом растёт риск потери последних данных при внезапном отключении питания: чем больше интервал, тем больше изменений может потеряться.\n\nВНИМАНИЕ: не ставьте большое значение на системах с важными данными. Оптимально 60–120 секунд для домашнего ПК. Значение 0 отключает периодическую запись вообще и используется только в тестовых системах.\n\nПараметр записывается в /etc/fstab, поэтому применяется после перезагрузки. Откат убирает параметр, тоже с перезагрузкой.",
-        "en": "The ext4 file system does not write every change to disk immediately. It collects them in RAM and flushes every 5 seconds by default — that is the commit parameter. This approach saves disk life and speeds up writing.\n\nThis option increases the flush interval. If you set, say, 120 seconds, the disk is hit less often, and the SSD lives longer. However, the risk of losing recent data on sudden power loss grows: the longer the interval, the more changes may be lost.\n\nWARNING: do not set a large value on systems with important data. 60–120 seconds is optimal for a home PC. Value 0 disables periodic flushing entirely and is only used on test systems.\n\nThe parameter is written to /etc/fstab and applies after a reboot. Rolling back removes the parameter, also with a reboot.",
-    },
-    "aliases": {
-        "ru": "В Linux много рутинных действий в терминале: обновление пакетов, очистка кэша, проверка места на диске. Каждый раз набирать длинные команды утомительно. Чтобы этого избежать, в файл .bashrc добавляют короткие функции-обёртки.\n\nЭта опция добавляет в ваш .bashrc готовый набор команд: upd (обновить списки пакетов), upgr (обновить пакеты), update_all (полное обновление системы, включая Flatpak), clean (очистка ненужных пакетов), space (показать свободное место), mem (очистить кэш памяти), fix (починить сломанные пакеты) и другие. Набираете три буквы — получаете результат.\n\nНе включайте, если вы не пользуетесь терминалом. Также не включайте, если у вас уже есть собственные функции с такими именами — они могут конфликтовать.\n\nОпция применяется сразу, но команды появятся только в новых терминалах. Откройте новый терминал или выполните «source ~/.bashrc». Откат удаляет блок команд.",
-        "en": "Linux has many routine terminal actions: updating packages, clearing cache, checking disk space. Typing long commands every time is tiring. To avoid this, short wrapper functions are added to the .bashrc file.\n\nThis option adds a ready set of commands to your .bashrc: upd (update package lists), upgr (upgrade packages), update_all (full system update, including Flatpak), clean (remove unnecessary packages), space (show free disk space), mem (clear memory cache), fix (repair broken packages) and others. Type three letters — get a result.\n\nDo not enable it if you do not use the terminal. Also do not enable it if you already have your own functions with these names — they may conflict.\n\nThe option applies immediately, but the commands only appear in new terminals. Open a new terminal or run «source ~/.bashrc». Rolling back removes the command block.",
-    },
-    "autoupdate": {
-        "ru": "Обновления системы нужно ставить регулярно — это вопросы безопасности и свежих функций. Вручную это делать лень, поэтому логично поручить задачу systemd. Он умеет запускать команды по расписанию с помощью таймеров.\n\nЭта опция создаёт systemd-таймер, который сам запускает обновление APT и Flatpak в выбранное время. Вы один раз настраиваете расписание (например, каждую субботу в 18:30) и забываете об этом. При включённом Cinnamon дополнительно обновляются апплеты и темы.\n\nВНИМАНИЕ: в Linux Mint есть встроенное автообновление (mintupdate). Если его не отключить, обновления будут запускаться дважды и могут конфликтовать. Отключите mintupdate перед включением этой опции.\n\nТаймер включается сразу, перезагрузка не нужна. Первое обновление произойдёт в ближайшее выбранное время. Откат удаляет таймер.",
-        "en": "System updates need to be installed regularly — it is a matter of security and fresh features. Doing it manually is tiring, so it makes sense to delegate the task to systemd. It can run commands on a schedule using timers.\n\nThis option creates a systemd timer that runs APT and Flatpak updates at the chosen time. You configure the schedule once (say, every Saturday at 18:30) and forget about it. On Cinnamon, applets and themes are updated as well.\n\nWARNING: Linux Mint has a built-in auto-update (mintupdate). If you do not disable it, updates will run twice and may conflict. Disable mintupdate before enabling this option.\n\nThe timer starts immediately, no reboot needed. The first update runs at the next chosen time. Rolling back removes the timer.",
-    },
-    "mount": {
-        "ru": "Когда система открывает файл на чтение, она по умолчанию обновляет время последнего доступа к нему. Это нужно для некоторых служебных задач, но на домашнем ПК бесполезно: никто не смотрит на эти метки. При этом каждая запись — это операция на диск, которая тратит ресурс SSD.\n\nОпция noatime отключает обновление времени доступа. Файлы и папки читаются как обычно, но система не делает служебную запись при каждом чтении. Диск меньше работает, SSD живёт дольше, чтение немного быстрее.\n\nНе включайте, если у вас обычный HDD и вас не волнует ресурс диска. На SSD выгода ощутимее. Также не включайте, если у вас есть программы, которые специально следят за временем доступа — таких мало, но они существуют.\n\nПараметры записываются в /etc/fstab, поэтому применяются после перезагрузки. Откат убирает их из fstab, тоже с перезагрузкой.",
-        "en": "When the system opens a file for reading, by default it updates the last-access time. This is needed for some service tasks, but on a home PC it is useless: nobody looks at those marks. Meanwhile every write is a disk operation that wears out the SSD.\n\nThe noatime option disables updating the access time. Files and folders are still read normally, but the system does not write to disk on every read. The disk works less, the SSD lives longer, and reads are slightly faster.\n\nDo not enable it if you have a conventional HDD and do not care about disk life. On an SSD the benefit is more noticeable. Also do not enable it if you have programs that specifically track access time — those are rare, but they exist.\n\nThe parameters are written to /etc/fstab and apply after a reboot. Rolling back removes them from fstab, also with a reboot.",
-    },
-    "steam": {
-        "ru": "Игры Steam под Proton (технология запуска Windows-игр в Linux) хранят свои данные в папке compatdata: настройки, сохранения, установленные библиотеки. По умолчанию эта папка лежит в домашней директории — в ~/.steam/steam/steamapps/compatdata.\n\nЕсли библиотека Steam находится на другом диске, например на NTFS-разделе, игра не может найти данные в домашней папке. Симлинк (ссылка) compatdata внутри библиотеки решает эту проблему: он указывает на домашнюю папку, и игры снова видят свои данные.\n\nНе включайте, если все ваши библиотеки Steam находятся на домашнем диске — там симлинк не нужен. Также не имеет смысла, если у вас нет Steam или вы не играете в игры под Proton.\n\nОпция работает сразу, перезагрузка не нужна. Если папка compatdata уже существует с данными — она не трогается, чтобы не потерять сохранения. Откат удаляет только созданные симлинки.",
-        "en": "Steam games under Proton (technology that runs Windows games on Linux) keep their data in the compatdata folder: settings, saves, installed libraries. By default this folder lives in the home directory — in ~/.steam/steam/steamapps/compatdata.\n\nIf the Steam library is on another disk, for example on an NTFS partition, the game cannot find the data in the home folder. A compatdata symlink (link) inside the library solves this: it points to the home folder, and games see their data again.\n\nDo not enable it if all your Steam libraries are on the home disk — the symlink is not needed there. Also it makes no sense if you do not have Steam or do not play games under Proton.\n\nThe option works immediately, no reboot needed. If the compatdata folder already exists with data, it is left untouched so saves are not lost. Rolling back removes only the created symlinks.",
-    },
 }
 
 SERVICES_META = {
@@ -257,59 +282,12 @@ SERVICES_META = {
     "touchegg.service": {"ru": "Распознаёт жесты тачпада и сенсора. Не нужен на настольном ПК без сенсора.", "en": "Recognizes touchpad and touchscreen gestures. Not needed on a desktop without a touchscreen."},
     "zfs-zed.service": {"ru": "Следит за дисковыми массивами ZFS и предупреждает о проблемах. Не нужен без ZFS.", "en": "Watches ZFS disk arrays and warns on problems. Not needed without ZFS."},
     "kerneloops.service": {"ru": "Отправляет разработчикам отчёты о сбоях ядра. На домашнем ПК это лишняя нагрузка и трафик.", "en": "Sends kernel crash reports to developers. On a home PC this is extra load and traffic."},
+    "rsyslog.service": {"ru": "Пишет подробные журналы системы на диск. Отключение экономит место и уменьшает износ SSD; важные сообщения остаются в журнале systemd.", "en": "Writes detailed system logs to disk. Disabling saves space and reduces SSD wear; important messages remain in the systemd journal."},
+    "apt-daily.timer": {"ru": "Ежедневно скачивает списки пакетов и обновления в фоне. Если вы включили автообновления в твикере, этот таймер глушится автоматически.", "en": "Downloads package lists and updates daily in the background. If you enable auto-updates in the tweaker, this timer is masked automatically."},
+    "apt-daily-upgrade.timer": {"ru": "Ежедневно устанавливает обновления в фоне. Может конфликтовать с автообновлениями твикера. Глушится автоматически при их включении.", "en": "Installs updates daily in the background. May conflict with the tweaker's auto-updates. Masked automatically when they are enabled."},
+    "unattended-upgrades.service": {"ru": "Устанавливает обновления безопасности автоматически. Если вы управляете обновлениями сами, служба не нужна.", "en": "Installs security updates automatically. If you manage updates yourself, the service is not needed."},
 }
 SERVICES_ORDER = list(SERVICES_META.keys())
-
-SERVICES_HELP = {
-    "avahi-daemon.service": {
-        "ru": "Avahi — это служба, которая ищет устройства в локальной сети без настройки. Она использует протокол mDNS/DNS-SD: устройства сами объявляют о себе, и вы видите их в списке доступных принтеров, колонок, телевизоров. Например, включив Chromecast, вы сразу видите его в браузере — это работа Avahi.\n\nНа домашнем ПК без сетевого принтера и без Chromecast/AirPlay служба не нужна. Она периодически рассылает пакеты в сеть, но делает это вхолостую. Отключение освобождает небольшой объём памяти и снижает сетевую активность.\n\nОтключение безопасно. Если позже захотите снова найти сетевое устройство — включите службу обратно.",
-        "en": "Avahi is a service that discovers devices on your local network without setup. It uses the mDNS/DNS-SD protocol: devices announce themselves, and you see them in the list of available printers, speakers, TVs. For example, when you turn on Chromecast, you see it in the browser right away — that is Avahi at work.\n\nOn a home PC without a network printer and without Chromecast/AirPlay, the service is unneeded. It periodically broadcasts into the network, but does so idle. Disabling it frees a little memory and reduces network activity.\n\nDisabling is safe. If you later want to find a network device again, re-enable the service.",
-    },
-    "avahi-daemon.socket": {
-        "ru": "Сокет — это как «розетка», которая «будит» службу Avahi, когда в сеть приходит первый запрос. У сокета и службы общая задача: пока никто не ищет устройства, Avahi может спать и не занимать ресурсы. Как только запрос появился — сокет запускает службу.\n\nЭтот сокет бесполезен сам по себе, без службы Avahi. Если Avahi отключена, сокет тоже не нужен — он просто ничего не делает.\n\nОтключайте его вместе со службой Avahi, чтобы она не «проснулась» нечаянно от сетевого запроса. Отключение безопасно.",
-        "en": "A socket is like a “plug” that wakes the Avahi service when the first network request arrives. The socket and the service share a task: while nobody is looking for devices, Avahi can sleep and use no resources. As soon as a request comes in, the socket starts the service.\n\nThis socket is useless on its own without the Avahi service. If Avahi is disabled, the socket is unneeded too — it does nothing.\n\nDisable it together with the Avahi service so it cannot accidentally wake up from a network request. Disabling is safe.",
-    },
-    "cups-browsed.service": {
-        "ru": "cups-browsed — это часть системы печати CUPS. Она автоматически ищет сетевые принтеры и добавляет их в список доступных. Удобно, когда вы подключаетесь к чужому офисному принтеру: он появляется сам, без ввода адреса.\n\nДома эта служба не нужна, если у вас нет сетевого принтера. Если принтер подключён по USB, служба тоже бесполезна — она ищет только сетевые устройства. При этом она периодически просыпается и рассылает запросы.\n\nОтключение безопасно. Если позже у вас появится сетевой принтер, можно включить обратно.",
-        "en": "cups-browsed is part of the CUPS printing system. It automatically discovers network printers and adds them to the list of available ones. Handy when you connect to someone else's office printer: it appears on its own, no address entry needed.\n\nAt home the service is unneeded if you have no network printer. If the printer is connected via USB, the service is also useless — it only looks for network devices. Meanwhile it periodically wakes up and sends requests.\n\nDisabling is safe. If a network printer appears later, you can re-enable it.",
-    },
-    "cups.service": {
-        "ru": "CUPS — это служба печати и сканирования. Все программы, которые что-то печатают или сканируют, обращаются к ней. Она управляет очередью печати, настройками принтеров, правами доступа.\n\nЕсли у вас нет принтера или сканера, CUPS просто висит в фоне и не делает ничего полезного. Отключение освобождает память и убирает фоновую активность. Если в будущем вы купите принтер — службу можно включить обратно, все настройки сохранятся.\n\nОтключение безопасно. Единственное, что перестанет работать — печать и сканирование, что и так не используется.",
-        "en": "CUPS is the printing and scanning service. Every program that prints or scans talks to it. It manages the print queue, printer settings and access rights.\n\nIf you have no printer or scanner, CUPS just idles in the background doing nothing useful. Disabling it frees memory and removes background activity. If you buy a printer later, the service can be re-enabled, and all settings are preserved.\n\nDisabling is safe. The only thing that stops working is printing and scanning, which is unused anyway.",
-    },
-    "cups.socket": {
-        "ru": "Сокет — это «розетка», которая будит службу печати CUPS, когда какая-то программа пытается что-то напечатать. Пока никто не печатает, CUPS может не работать. Как только появился запрос на печать — сокет запускает службу.\n\nЭтот сокет бесполезен без службы CUPS. Если вы отключили CUPS, сокет тоже не нужен.\n\nОтключайте его вместе со службой CUPS. Если позже включите печать обратно, не забудьте включить и сокет.",
-        "en": "A socket is a “plug” that wakes the CUPS print service when a program tries to print. While nobody prints, CUPS does not have to run. As soon as a print request appears, the socket starts the service.\n\nThis socket is useless without the CUPS service. If you disabled CUPS, the socket is unneeded too.\n\nDisable it together with the CUPS service. If you later re-enable printing, remember to enable the socket as well.",
-    },
-    "ModemManager.service": {
-        "ru": "ModemManager — это служба для работы с мобильными модемами. Она управляет устройствами, которые подключаются к компьютеру через USB или встроены в ноутбук и работают через сим-карту. Именно она позволяет выйти в интернет через 3G или 4G.\n\nНа стационарном ПК без модема эта служба не нужна. Более того, она иногда мешает устройствам, которые определяются как последовательный порт (serial port): Arduino, переходники USB-Serial, отладочные платы. ModemManager может пытаться «поговорить» с ними по-своему и портить связь.\n\nЕсли у вас есть такие устройства и они работают нестабильно — отключение ModemManager часто решает проблему. Если вы выходите в интернет через сим-карту, служба нужна.",
-        "en": "ModemManager is a service for mobile modems. It manages devices plugged in via USB or built into a laptop and working via SIM. It is what lets you go online through 3G or 4G.\n\nOn a desktop PC without a modem the service is unneeded. Moreover, it sometimes interferes with devices that appear as serial ports: Arduino, USB-Serial adapters, development boards. ModemManager may try to “talk” to them its own way and disrupt communication.\n\nIf you have such devices and they work unreliably, disabling ModemManager often fixes the problem. If you get internet via SIM, keep the service enabled.",
-    },
-    "openvpn.service": {
-        "ru": "OpenVPN — это система для создания защищённых туннелей между компьютерами. Служба openvpn.service относится к серверной части: она принимает входящие подключения от других устройств. Если вы обычно используете VPN-клиент (например, подключаетесь к коммерческому VPN), это не та служба — она для другого.\n\nДома эту службу держат только те, кто поднимает собственный VPN-сервер, к которому подключаются извне. Если вы не настраивали такое — служба просто неактивна и не нужна.\n\nОтключение безопасно. Если в будущем вы решите поднять свой VPN-сервер, службу можно включить обратно.",
-        "en": "OpenVPN is a system for creating secure tunnels between computers. The openvpn.service unit is the server side: it accepts incoming connections from other devices. If you usually use a VPN client (for example, connecting to a commercial VPN), that is not this service — this one is for something else.\n\nAt home only those who run their own VPN server keep this service — the one others connect to from the outside. If you did not set up such a thing, the service is inactive and unneeded.\n\nDisabling is safe. If you later decide to run your own VPN server, the service can be re-enabled.",
-    },
-    "lvm2-monitor.service": {
-        "ru": "LVM — это способ объединить несколько дисков или разделов в один большой «виртуальный» диск. Удобно, когда не хватает места на одном диске: вы добавляете ещё один, и они работают как один. Служба lvm2-monitor следит за состоянием таких объединений и уведомляет о проблемах.\n\nПри обычной установке Linux Mint или Ubuntu LVM не используется. Диски и разделы подключаются напрямую. Значит, служба не нужна — она только висит в фоне.\n\nОтключение безопасно. Не отключайте, если вы специально настраивали LVM и используете объединённые тома.",
-        "en": "LVM is a way to combine several disks or partitions into one big “virtual” disk. Useful when one disk is not enough: you add another, and they work as one. The lvm2-monitor service watches such unions and reports problems.\n\nA standard Linux Mint or Ubuntu install does not use LVM. Disks and partitions are attached directly. So the service is unneeded — it just idles in the background.\n\nDisabling is safe. Do not disable it if you specifically configured LVM and use combined volumes.",
-    },
-    "switcheroo-control.service": {
-        "ru": "Switcheroo — это служба для ноутбуков с двумя видеокартами (обычно встроенной Intel и отдельной NVIDIA или AMD). Она позволяет переключаться между картами: для офисных задач использовать встроенную (экономно), для игр — отдельную (мощно).\n\nНа настольном ПК с одной видеокартой эта служба не нужна. Ей нечем управлять, и она просто висит в фоне.\n\nОтключение безопасно. Если у вас ноутбук с двумя картами, лучше оставить — иначе переключение работать не будет.",
-        "en": "Switcheroo is a service for laptops with two GPUs (usually an integrated Intel and a discrete NVIDIA or AMD). It lets you switch between them: use the integrated for office tasks (power-efficient), the discrete one for games (powerful).\n\nOn a desktop PC with a single GPU the service is unneeded. There is nothing to manage, and it just idles in the background.\n\nDisabling is safe. If you have a laptop with two GPUs, better leave it enabled — otherwise switching will not work.",
-    },
-    "touchegg.service": {
-        "ru": "Touchegg — это служба, которая распознаёт мультитач-жесты на тачпадах и сенсорных экранах. Например, свайп тремя пальцами для переключения рабочих столов, жест двумя пальцами для масштабирования. Работает на некоторых ноутбуках и планшетах.\n\nНа настольном ПК без сенсорного ввода эта служба не нужна. Ей нечего распознавать, и она просто занимает небольшой объём памяти.\n\nОтключение безопасно. Если у вас ноутбук с тачпадом и вы пользуетесь жестами — оставьте включённой.",
-        "en": "Touchegg is a service that recognizes multitouch gestures on touchpads and touchscreens. For example, a three-finger swipe to switch desktops, a two-finger gesture to zoom. It works on some laptops and tablets.\n\nOn a desktop PC without touch input the service is unneeded. There is nothing to recognize, and it just uses a small amount of memory.\n\nDisabling is safe. If you have a laptop with a touchpad and use gestures, keep it enabled.",
-    },
-    "zfs-zed.service": {
-        "ru": "ZFS — это современная файловая система с поддержкой дисковых массивов, контрольных сумм и снапшотов. Она используется на серверах и NAS. ZED — это демон ZFS, который следит за состоянием массивов и предупреждает о проблемах с дисками.\n\nНа домашнем ПК с обычными файловыми системами (ext4, btrfs) ZFS не используется. Значит, и служба ZED не нужна — она не находит массивов и просто висит в фоне.\n\nОтключение безопасно. Не отключайте, если у вас действительно есть ZFS-пулы.",
-        "en": "ZFS is a modern file system with disk arrays, checksums and snapshots. It is used on servers and NAS. ZED is the ZFS daemon that watches array health and warns about disk problems.\n\nOn a home PC with conventional file systems (ext4, btrfs) ZFS is not used. So the ZED service is unneeded — it finds no arrays and just idles in the background.\n\nDisabling is safe. Do not disable it if you actually have ZFS pools.",
-    },
-    "kerneloops.service": {
-        "ru": "kerneloops — это служба, которая собирает отчёты о сбоях ядра (kernel oops) и отправляет их разработчикам. Технически она помогает находить и исправлять баги в ядре Linux. Информация уходит на сервер проекта.\n\nНа домашнем ПК эта служба приносит мало пользы. Она лишь добавляет фоновую нагрузку и исходящий трафик. Если ядро у вас падает часто — это скорее повод разобраться с драйверами, чем отправлять отчёты.\n\nОтключение безопасно. Оставьте включённой, если хотите помогать разработчикам ядра.",
-        "en": "kerneloops is a service that collects reports about kernel crashes (kernel oops) and sends them to developers. Technically it helps find and fix bugs in the Linux kernel. The information goes to the project's server.\n\nOn a home PC the service brings little benefit. It only adds background load and outgoing traffic. If your kernel crashes often, that is a reason to look into drivers, not to send reports.\n\nDisabling is safe. Keep it enabled if you want to help kernel developers.",
-    },
-}
 
 OPTION_FILES = {
     "rsyslog": ["/etc/systemd/system/rsyslog.service",
@@ -318,6 +296,8 @@ OPTION_FILES = {
     "audit": ["/etc/default/grub"],
     "raid": ["/etc/default/grub"],
     "nmi_watchdog": ["/etc/default/grub"],
+    "itco_wdt": ["/etc/modprobe.d/nmi-watchdog.conf"],
+    "zfs_services": ["/etc/default/zfs"],
     "corectrl": ["/etc/polkit-1/rules.d/90-corectrl.rules",
                  "/etc/polkit-1/localauthority/50-local.d/90-corectrl.pkla"],
     "ppfeaturemask": ["/etc/default/grub"],
@@ -342,6 +322,7 @@ OPTION_FILES = {
                    "/etc/systemd/system/biweekly-upgrade.service"],
 }
 
+
 STR = {
     "ru": {
         "tab_tune": "Тюнинг", "tab_serv": "Службы", "tab_stat": "Статус",
@@ -355,6 +336,8 @@ STR = {
         "ready": "Готово", "running": "Выполнение...", "done": "Готово",
         "applied_yes": "✓ применено", "applied_no": "не применено",
         "btn_file": "файл", "btn_q": "?",
+        "btn_remove_zfs": "Удалить пакеты (осторожно)",
+        "btn_remove_zfs_unavailable": "Удалить пакеты (недоступно)",
         "menu_copy": "Копировать", "menu_copy_all": "Копировать всё",
         "menu_select_all": "Выделить всё",
         "svc_name": "Служба", "svc_state": "Состояние", "svc_run": "Запуск",
@@ -387,27 +370,41 @@ STR = {
         "steam_title": "Steam: симлинки compatdata",
         "steam_desc": "Создаст ссылку compatdata на ~/.steam/steam/steamapps/compatdata для библиотек Steam на NTFS-разделах, чтобы игры видели данные Proton/Wine из домашней папки.",
         "mount_short": "параметры монтирования", "steam_short": "симлинк compatdata",
+        "commit_title": "commit=NN (только ext3/ext4)",
+        "commit_desc": "Параметр commit= понимают ТОЛЬКО ext2/ext3/ext4. Для NTFS, FAT32, exFAT, btrfs, xfs он приведёт к ошибке монтирования. Ниже — только подходящие разделы.",
+        "commit_none": "Подходящих разделов (ext2/ext3/ext4) не найдено.",
+        "commit_value_label": "Значение (сек):",
         "kern_sw": "насколько охотно система выгружает память в swap (меньше значение — реже)",
         "kern_vfs": "кэш файлов в памяти",
         "kern_numa": "миграция памяти между ядрами",
         "kern_thp": "крупные блоки памяти",
+        "kern_wd": "NMI watchdog (0 = выключен, 1 = включён)",
         "thp_cur": "сейчас: %s",
         "thp_val_always": "всем подряд", "thp_val_madvise": "по запросу",
         "thp_val_never": "выключено",
         "tw_name": "Твик", "kn_param": "Параметр", "kn_val": "Значение",
         "sudo_title": "sudo", "sudo_prompt": "Пароль sudo (попытка %d из 3):",
         "sudo_wrong": "Неверный пароль или нет прав sudo.",
-        "autoupdate_warn": "Включено автообновление по расписанию. Отключите встроенное автообновление Mint (mintupdate), иначе обновления будут выполняться дважды.",
+        "autoupdate_warn": "Включено автообновление по расписанию. Твикер автоматически отключит apt-daily, apt-daily-upgrade и unattended-upgrades, чтобы обновления не выполнялись дважды. Встроенное автообновление Mint (mintupdate) останется как есть — отключите его вручную, если не хотите дублирования.",
         "viewer": "Просмотр файла", "viewer_ext": "Открыть во внешнем редакторе",
         "about_title": "О твикере",
         "about_purpose": "Графическая оболочка тюнинга для Linux Mint / Ubuntu / Debian и других systemd-дистрибутивов: твики производительности, логов, дисков, сети и игр с откатом и бэкапами.",
         "about_author": "Автор", "about_author_name": "Дмитрий Свистунов",
         "about_ver": "Версия",
+        "about_license": "Лицензия",
+        "about_disclaimer": "ОТКАЗ ОТ ОТВЕТСТВЕННОСТИ\n\nТвикер изменяет системные файлы (GRUB, fstab, sysctl, systemd-юниты, конфиги приложений). Все изменения вы делаете на свой страх и риск. Перед применением твиков убедитесь, что у вас есть резервная копия важных данных и загрузочная флешка на случай проблем с загрузкой. Автор не несёт ответственности за потерю данных, отказ загрузки или нестабильную работу системы. Бэкапы изменённых файлов сохраняются в ~/system-tuneup-backups/.",
+        "zfs_remove_title": "Удаление пакетов ZFS",
+        "zfs_remove_body": "Твикер проверил: ZFS-пулов нет, ZFS-монтирований нет, записей в /etc/fstab и /etc/crypttab нет.\n\nЕсли вы устанавливали ZFS вручную и используете его вне стандартных мест — удаление приведёт к потере доступа к данным.\n\nОтмена возможна только через «sudo apt install zfsutils-linux».\n\nУдалить пакеты zfsutils-linux и zfs-zed?",
+        "zfs_remove_done": "Пакеты ZFS удалены. Откат возможен только вручную: sudo apt install zfsutils-linux",
+        "disabled_reason": "недоступно: %s",
+        "itco_reason_ok": "watchdog активен — твик рекомендуется",
         "msg_run": "Скрипт уже запущен. Дождитесь завершения.",
         "msg_noopt": "Отметьте хотя бы одну опцию.",
         "msg_sel": "Сначала выберите строки в таблице.",
         "msg_nofile": "Файл ещё не существует. Пути, где опция вносит изменения:",
         "msg_close": "Прервать выполнение и закрыть?",
+        "msg_running_title": "Уже запущено",
+        "msg_running_text": "Linux Tweaker уже запущен.",
     },
     "en": {
         "tab_tune": "Tuning", "tab_serv": "Services", "tab_stat": "Status",
@@ -421,6 +418,8 @@ STR = {
         "ready": "Ready", "running": "Running...", "done": "Done",
         "applied_yes": "✓ applied", "applied_no": "not applied",
         "btn_file": "file", "btn_q": "?",
+        "btn_remove_zfs": "Remove packages (careful)",
+        "btn_remove_zfs_unavailable": "Remove packages (unavailable)",
         "menu_copy": "Copy", "menu_copy_all": "Copy all",
         "menu_select_all": "Select all",
         "svc_name": "Service", "svc_state": "State", "svc_run": "Running",
@@ -453,27 +452,78 @@ STR = {
         "steam_title": "Steam: compatdata symlinks",
         "steam_desc": "Creates a compatdata symlink to ~/.steam/steam/steamapps/compatdata for Steam libraries on NTFS partitions so games can see Proton/Wine data from the home folder.",
         "mount_short": "mount options", "steam_short": "compatdata symlink",
+        "commit_title": "commit=NN (ext3/ext4 only)",
+        "commit_desc": "Only ext2/ext3/ext4 understand commit=. For NTFS, FAT32, exFAT, btrfs, xfs it will fail to mount. Below are only suitable partitions.",
+        "commit_none": "No suitable partitions (ext2/ext3/ext4) found.",
+        "commit_value_label": "Value (sec):",
         "kern_sw": "how eagerly the system moves memory to swap (lower = less often)",
         "kern_vfs": "file cache in RAM",
         "kern_numa": "memory migration between cores",
         "kern_thp": "large memory blocks",
+        "kern_wd": "NMI watchdog (0 = off, 1 = on)",
         "thp_cur": "now: %s",
         "thp_val_always": "always on", "thp_val_madvise": "on request",
         "thp_val_never": "off",
         "tw_name": "Tweak", "kn_param": "Parameter", "kn_val": "Value",
         "sudo_title": "sudo", "sudo_prompt": "sudo password (attempt %d of 3):",
         "sudo_wrong": "Wrong password or no sudo rights.",
-        "autoupdate_warn": "Scheduled auto-update enabled. Disable the built-in Mint auto-update (mintupdate), otherwise updates will run twice.",
+        "autoupdate_warn": "Scheduled auto-update enabled. The tweaker will automatically mask apt-daily, apt-daily-upgrade and unattended-upgrades so updates do not run twice. Mint's built-in auto-update (mintupdate) is left as is — disable it manually if you do not want duplicates.",
         "viewer": "File viewer", "viewer_ext": "Open in external editor",
         "about_title": "About",
         "about_purpose": "A graphical tuning shell for Linux Mint / Ubuntu / Debian and other systemd distributions: performance, logs, disk, network and gaming tweaks with rollback and backups.",
         "about_author": "Author", "about_author_name": "Dmitry Svistunov",
         "about_ver": "Version",
+        "about_license": "License",
+        "about_disclaimer": "DISCLAIMER\n\nThis tweaker modifies system files (GRUB, fstab, sysctl, systemd units, application configs). You use it at your own risk. Before applying tweaks, make sure you have a backup of important data and a bootable USB stick in case of boot problems. The author is not responsible for data loss, boot failure or system instability. Backups of modified files are stored in ~/system-tuneup-backups/.",
+        "zfs_remove_title": "ZFS package removal",
+        "zfs_remove_body": "The tweaker checked: no ZFS pools, no ZFS mounts, no entries in /etc/fstab or /etc/crypttab.\n\nIf you installed ZFS manually and use it outside standard locations, removal will cut off access to your data.\n\nRollback is possible only via «sudo apt install zfsutils-linux».\n\nRemove packages zfsutils-linux and zfs-zed?",
+        "zfs_remove_done": "ZFS packages removed. Rollback only manually: sudo apt install zfsutils-linux",
+        "disabled_reason": "unavailable: %s",
+        "itco_reason_ok": "watchdog is active — tweak recommended",
         "msg_run": "A job is already running. Wait for it to finish.",
         "msg_noopt": "Tick at least one option.",
         "msg_sel": "Select table rows first.",
         "msg_nofile": "This file appears after applying the option. Paths the option modifies:",
         "msg_close": "Interrupt the job and close?",
+        "msg_running_title": "Already running",
+        "msg_running_text": "Linux Tweaker is already running.",
+    },
+}
+
+
+# Длинные справки — оставлены как в предыдущей версии (не повторяю для краткости,
+# вставьте свой OPTIONS_HELP и SERVICES_HELP сюда, добавив блоки itco_wdt и zfs_services).
+OPTIONS_HELP = {
+    "itco_wdt": {
+        "ru": "Этот твик — дополнение к «nmi_watchdog=0 (GRUB)». На многих системах с Intel-чипсетом после загрузки ядра модуль iTCO_wdt снова включает NMI watchdog, даже если вы передали параметр nmi_watchdog=0. В итоге /proc/sys/kernel/nmi_watchdog снова становится 1, и микро-фризы возвращаются.\n\nРешение — заблокировать модуль iTCO_wdt, чтобы он вообще не загружался. В файле /etc/modprobe.d/nmi-watchdog.conf прописываются строки blacklist и install ... /bin/false.\n\nТвикер сам проверяет, нужен ли твик: если после перезагрузки watchdog остался выключенным (0) и модуль не загружен — чекбокс блокируется, чтобы вы не делали лишнего.\n\nПроверить состояние: cat /proc/sys/kernel/nmi_watchdog — должно быть 0. Откат удаляет файл и позволяет модулю загружаться снова.",
+        "en": "This tweak complements «nmi_watchdog=0 (GRUB)». On many systems with an Intel chipset, the iTCO_wdt module re-enables the NMI watchdog after the kernel is loaded — even if you passed nmi_watchdog=0. As a result /proc/sys/kernel/nmi_watchdog becomes 1 again, and micro-stutters come back.\n\nThe fix is to block the iTCO_wdt module entirely. In /etc/modprobe.d/nmi-watchdog.conf lines blacklist and install ... /bin/false are written.\n\nThe tweaker checks whether the tweak is needed: if after reboot the watchdog stays off (0) and the module is not loaded, the checkbox is disabled so you do not do extra work.\n\nCheck the state: cat /proc/sys/kernel/nmi_watchdog — should be 0. Rolling back removes the file and lets the module load again.",
+    },
+    "zfs_services": {
+        "ru": "ZFS — это файловая система и менеджер томов, который используется на серверах и NAS. На домашнем ПК его обычно не ставят, но некоторые дистрибутивы (Ubuntu, Mint) устанавливают пакеты ZFS «на всякий случай».\n\nПроблема: даже если ZFS не используется, его службы запускаются при загрузке и тянут за собой systemd-udev-settle.service. В итоге загрузка замедляется без пользы.\n\nЭтот твик делает две вещи. Первое — останавливает и маскирует ZFS-службы (обратимо). Второе — кнопка «Удалить пакеты (осторожно)» полностью удаляет zfsutils-linux и zfs-zed (необратимо).\n\nПеред удалением твикер проверяет, используется ли ZFS (zpool list, findmnt -t zfs, /etc/fstab, /etc/crypttab). Если найден хотя бы один пул — кнопка серой. Это защита от случайного удаления.",
+        "en": "ZFS is a file system and volume manager used on servers and NAS. It is usually not installed on a home PC, but some distributions (Ubuntu, Mint) install ZFS packages «just in case».\n\nThe problem: even if ZFS is not used, its services run at boot and pull in systemd-udev-settle.service. The result is slower boot with no benefit.\n\nThis tweak does two things. First — stops and masks ZFS services (reversible). Second — the «Remove packages (careful)» button fully removes zfsutils-linux and zfs-zed (irreversible).\n\nBefore removal the tweaker checks whether ZFS is used (zpool list, findmnt -t zfs, /etc/fstab, /etc/crypttab). If at least one pool is found — the button is greyed out. This protects against accidental removal.",
+    },
+    "commit": {
+        "ru": "Параметр commit=NN заставляет файловую систему реже сбрасывать накопленные данные на диск: не раз в 5 секунд по умолчанию, а раз в NN секунд. Это уменьшает число операций записи и продлевает жизнь SSD.\n\nВАЖНО: параметр понимают ТОЛЬКО файловые системы семейства ext — ext2, ext3, ext4. Для NTFS, FAT32, exFAT, btrfs, xfs, f2fs и других он неизвестен: ядро может проигнорировать или отказаться монтировать раздел.\n\nПоэтому в твикере показываются только разделы с ext2/ext3/ext4.\n\nВНИМАНИЕ: чем больше интервал, тем выше риск потерять последние данные при внезапном отключении питания. Разумно 60–120 секунд.\n\nИзменения записываются в /etc/fstab и вступают в силу после перезагрузки.",
+        "en": "The commit=NN parameter makes the file system flush accumulated data to disk less often: not every 5 seconds by default, but every NN seconds. This reduces write operations and extends SSD life.\n\nIMPORTANT: only file systems of the ext family support this — ext2, ext3, ext4. For NTFS, FAT32, exFAT, btrfs, xfs, f2fs and others the parameter is unknown.\n\nTherefore in this tweaker only partitions with ext2/ext3/ext4 are shown.\n\nWARNING: the longer the interval, the higher the risk of losing the latest written data on sudden power loss. Reasonable values are 60–120 seconds.\n\nChanges are written to /etc/fstab and take effect after a reboot.",
+    },
+}
+
+SERVICES_HELP = {
+    "rsyslog.service": {
+        "ru": "rsyslog — это служба, которая постоянно пишет подробные журналы системы в текстовые файлы на диске. Каждую секунду она дописывает туда события: запуск служб, ошибки, вход пользователей. На домашнем ПК эти файлы почти никто не читает, но диск получает постоянные операции записи.\n\nОтключение освобождает место в /var/log и уменьшает износ SSD. Важные сообщения при этом никуда не пропадают — они идут в журнал systemd, который смотрится командой journalctl.\n\nНе отключайте, если вы привыкли разбираться с проблемами по старым файлам журналов.",
+        "en": "rsyslog is a service that constantly writes detailed system logs into text files on the disk. Every second it appends events: service starts, errors, user logins. On a home PC nobody reads these files, but the disk keeps getting write operations.\n\nDisabling it frees space in /var/log and reduces SSD wear. Important messages are not lost — they go to the systemd journal, which you can view with journalctl.\n\nDo not disable it if you are used to troubleshooting by reading old log files.",
+    },
+    "apt-daily.timer": {
+        "ru": "apt-daily.timer — это systemd-таймер, который раз в сутки запускает загрузку свежих списков пакетов в фоне. Он есть в Ubuntu, Linux Mint и Debian.\n\nЕсли вы уже включили автообновления в твикере, этот таймер создаёт двойную нагрузку. Твикер глушит его автоматически при включении автообновлений.\n\nОтключайте вручную только если у вас лимитированный интернет или вы обновляетесь только вручную.",
+        "en": "apt-daily.timer is a systemd timer that once a day fetches fresh package lists in the background. It exists in Ubuntu, Linux Mint and Debian.\n\nIf you have already enabled auto-updates in the tweaker, this timer creates a double load. The tweaker masks it automatically when auto-updates are enabled.\n\nDisable it manually only if you have metered internet or update only manually.",
+    },
+    "apt-daily-upgrade.timer": {
+        "ru": "apt-daily-upgrade.timer — это дополнение к apt-daily.timer: он не просто скачивает списки пакетов, а устанавливает обновления в фоне.\n\nЕсли вы включили автообновления в твикере, этот таймер дублирует их работу. Твикер глушит его автоматически.\n\nОтключайте вручную только если вы точно управляете обновлениями сами.",
+        "en": "apt-daily-upgrade.timer complements apt-daily.timer: it not only downloads package lists but actually installs updates in the background.\n\nIf you enabled auto-updates in the tweaker, this timer duplicates their work. The tweaker masks it automatically.\n\nDisable it manually only if you truly manage updates yourself.",
+    },
+    "unattended-upgrades.service": {
+        "ru": "unattended-upgrades — это служба, которая устанавливает обновления безопасности автоматически, без вашего участия.\n\nНа домашнем ПК это удобно, если вы не хотите думать об обновлениях. Но если вы уже управляете обновлениями через твикер, служба становится лишней. Твикер глушит её автоматически при включении автообновлений.\n\nОтключайте вручную только если вы точно контролируете обновления.",
+        "en": "unattended-upgrades is a service that installs security updates automatically, without your involvement.\n\nOn a home PC this is convenient if you do not want to think about updates. But if you already manage updates through the tweaker, the service becomes redundant. The tweaker masks it automatically when auto-updates are enabled.\n\nDisable it manually only if you fully control updates.",
     },
 }
 
@@ -546,6 +596,8 @@ def parse_mounts():
                                   "fuseblk"):
                     continue
                 if "rw" not in opts.split(","):
+                    continue
+                if _is_removable_device(dev):
                     continue
                 items.append({"dev": dev, "mp": mp, "fstype": fstype})
     except Exception:
@@ -786,6 +838,10 @@ class SystemState:
         self.has_flatpak = False
         self.user_name = "root"
         self.user_home = "/root"
+        self.is_intel = False
+        self.has_itco_module = False
+        self.zfs_installed = False
+        self.zfs_used = False
 
     def detect(self):
         try:
@@ -849,6 +905,21 @@ class SystemState:
         s = os.environ.get("DESKTOP_SESSION", "").lower()
         self.cinnamon = "cinnamon" in d or s == "cinnamon"
         self.has_flatpak = bool(shutil.which("flatpak"))
+        self.is_intel = False
+        try:
+            with open("/proc/cpuinfo", "r", encoding="utf-8", errors="replace") as f:
+                if "GenuineIntel" in f.read():
+                    self.is_intel = True
+        except Exception:
+            pass
+        self.has_itco_module = False
+        try:
+            r = subprocess.run(["modinfo", "iTCO_wdt"], capture_output=True, timeout=5)
+            self.has_itco_module = (r.returncode == 0)
+        except Exception:
+            pass
+        self.zfs_installed = zfs_packages_installed()
+        self.zfs_used = zfs_in_use()
 
     def _real_user(self):
         for var in ("SUDO_USER", "PKEXEC_USER"):
@@ -872,6 +943,39 @@ class SystemState:
             pass
         return "root"
 
+    def _read_watchdog(self):
+        try:
+            with open("/proc/sys/kernel/nmi_watchdog", "r",
+                      encoding="utf-8", errors="replace") as f:
+                return int(f.read().strip())
+        except Exception:
+            return -1
+
+    def _itco_loaded(self):
+        try:
+            r = subprocess.run(["lsmod"], capture_output=True, text=True, timeout=5)
+            return any(line.split() and line.split()[0] == "iTCO_wdt"
+                       for line in r.stdout.splitlines())
+        except Exception:
+            return False
+
+    def itco_status(self):
+        """(доступен, причина) — нужен ли твик iTCO_wdt на этой системе."""
+        if not self.is_intel:
+            return False, ("не Intel-система" if detect_lang() == "ru"
+                           else "not an Intel system")
+        if not self.has_itco_module:
+            return False, ("модуль iTCO_wdt не поддерживается ядром"
+                           if detect_lang() == "ru"
+                           else "iTCO_wdt module not supported by kernel")
+        wd = self._read_watchdog()
+        mod_loaded = self._itco_loaded()
+        if wd == 0 and not mod_loaded:
+            return False, ("watchdog уже отключён параметром ядра"
+                           if detect_lang() == "ru"
+                           else "watchdog already disabled by kernel parameter")
+        return True, ""
+
 
 class SystemOps:
     def __init__(self, sudo, state, log, dry_run):
@@ -881,6 +985,7 @@ class SystemOps:
         self.dry_run = dry_run
         self.grub_changed = False
         self.mount_items = []
+        self.commit_targets = []
         self.backup_dir = os.path.join(state.user_home, "system-tuneup-backups")
 
     def backup_file(self, path):
@@ -1207,6 +1312,79 @@ class SystemOps:
     def apply_nmi_watchdog(self, params=None):
         return self.add_grub_params(["nmi_watchdog=0"])
 
+    def apply_itco_wdt(self, params=None):
+        if not getattr(self.state, "is_intel", False):
+            self.log("Not an Intel system, skipping", "warning"); return False
+        if not getattr(self.state, "has_itco_module", False):
+            self.log("iTCO_wdt module not available, skipping", "warning"); return False
+        path = "/etc/modprobe.d/nmi-watchdog.conf"
+        content = ("blacklist iTCO_wdt\n"
+                   "blacklist iTCO_vendor_support\n"
+                   "install iTCO_wdt /bin/false\n"
+                   "install iTCO_vendor_support /bin/false\n")
+        if not self.write_file(path, content, chmod="644", mkdir=True):
+            return False
+        self.log("✓ iTCO_wdt blacklisted (needs reboot)", "success")
+        return True
+
+    def apply_zfs_services(self, params=None):
+        if self.dry_run:
+            for u in ZFS_UNITS:
+                self.log("[DRY RUN] systemctl disable --now %s" % u, "warning")
+                self.log("[DRY RUN] systemctl mask %s" % u, "warning")
+            return True
+        ok_any = False
+        for u in ZFS_UNITS:
+            if not self.unit_exists(u):
+                continue
+            self.sudo_run(["systemctl", "disable", "--now", u], ignore_error=True)
+            if self.sudo_run(["systemctl", "mask", u], ignore_error=True):
+                ok_any = True
+        if ok_any:
+            self.log("✓ ZFS services masked", "success")
+        return ok_any
+
+    def rollback_zfs_services(self, params=None):
+        if self.dry_run:
+            for u in ZFS_UNITS:
+                self.log("[DRY RUN] systemctl unmask %s" % u, "warning")
+                self.log("[DRY RUN] systemctl enable %s" % u, "warning")
+            return True
+        for u in ZFS_UNITS:
+            if not self.unit_exists(u):
+                continue
+            self.sudo_run(["systemctl", "unmask", u], ignore_error=True)
+            self.sudo_run(["systemctl", "enable", u], ignore_error=True)
+        self.log("✓ ZFS services unmasked", "success")
+        return True
+
+    def apply_zfs_remove_packages(self, params=None):
+        if zfs_in_use():
+            self.log("ZFS is in use, aborting package removal", "error")
+            return False
+        if not zfs_packages_installed():
+            self.log("ZFS packages not installed", "info")
+            return True
+        if self.dry_run:
+            self.log("[DRY RUN] apt purge zfs-zed zfsutils-linux", "warning")
+            self.log("[DRY RUN] apt autoremove", "warning")
+            self.log("[DRY RUN] update-initramfs -u -k all", "warning")
+            self.log("[DRY RUN] update-grub", "warning")
+            return True
+        if not self.sudo_run(["apt", "purge", "-y", "zfs-zed", "zfsutils-linux"],
+                             err_msg="apt purge ZFS failed"):
+            return False
+        self.sudo_run(["apt", "autoremove", "-y"], ignore_error=True)
+        self.sudo_run(["update-initramfs", "-u", "-k", "all"], ignore_error=True)
+        self.sudo_run(["update-grub"], ignore_error=True)
+        self.log("✓ ZFS packages removed", "success")
+        return True
+
+    def rollback_zfs_remove_packages(self, params=None):
+        self.log("Rollback of ZFS package removal is not supported. "
+                 "Run 'sudo apt install zfsutils-linux' manually.", "warning")
+        return False
+
     def _polkit_is_new(self):
         try:
             res = subprocess.run(["pkaction", "--version"],
@@ -1466,6 +1644,12 @@ class SystemOps:
         return next((it["dev"] for it in self.mount_items
                      if mp in it.get("mps", [])), None)
 
+    def _fstype_of_mp(self, mp):
+        for it in self.mount_items:
+            if mp in it.get("mps", []):
+                return it.get("fstype", "").lower()
+        return ""
+
     def _mount_opts_edit(self, mp, add=True):
         path = "/etc/fstab"
         content = self.read_file(path)
@@ -1497,6 +1681,11 @@ class SystemOps:
 
     def _mount_commit_edit(self, mp, val, add=True):
         path = "/etc/fstab"
+        fstype = self._fstype_of_mp(mp)
+        if add and not fs_supports_commit(fstype):
+            self.log("Skipped %s (%s): commit= is only valid for ext2/3/4"
+                     % (mp, fstype or "unknown"), "warning")
+            return False
         content = self.read_file(path)
         if not content:
             self.log("Cannot read /etc/fstab", "error"); return False
@@ -1537,9 +1726,6 @@ class SystemOps:
 
     def apply_commit(self, params=None):
         params = params or {}
-        if not self.mount_items:
-            self.log("No mount items to apply commit", "warning")
-            return False
         val = str(params.get("commit_value", "60")).strip() or "60"
         try:
             iv = int(val)
@@ -1549,28 +1735,48 @@ class SystemOps:
             self.log("Bad commit value: %s (1-3600)" % val, "error")
             return False
         val = str(iv)
+        targets = list(self.commit_targets)
+        if not targets:
+            self.log("commit=: no ext2/3/4 partitions selected — nothing to do",
+                     "warning")
+            return True
         if self.dry_run:
-            self.log("[DRY RUN] fstab commit=%s" % val, "warning"); return True
+            for mp in targets:
+                self.log("[DRY RUN] fstab %s commit=%s" % (mp, val), "warning")
+            return True
         ok = True
-        for m in self.mount_items:
-            for mp in m["mps"]:
-                ok = self._mount_commit_edit(mp, val, True) and ok
-        if ok:
-            self.log("✓ fstab commit=%s (after reboot)" % val, "success")
+        applied_any = False
+        for mp in targets:
+            fstype = self._fstype_of_mp(mp)
+            if not fs_supports_commit(fstype):
+                self.log("Skipped %s (%s): commit= unsupported here"
+                         % (mp, fstype or "unknown"), "warning")
+                continue
+            if self._mount_commit_edit(mp, val, True):
+                applied_any = True
+            else:
+                ok = False
+        if applied_any and ok:
+            self.log("✓ fstab commit=%s applied to %d partition(s) (after reboot)"
+                     % (val, len(targets)), "success")
         return ok
 
     def rollback_commit(self, params=None):
         if self.dry_run:
             self.log("[DRY RUN] fstab remove commit", "warning"); return True
-        if not self.mount_items:
-            self.log("No mount items to rollback commit", "warning")
-            return False
+        targets = list(self.commit_targets)
+        if not targets:
+            self.log("commit=: no partitions selected for rollback", "warning")
+            return True
         ok = True
-        for m in self.mount_items:
-            for mp in m["mps"]:
-                ok = self._mount_commit_edit(mp, "", False) and ok
+        for mp in targets:
+            if self._mount_commit_edit(mp, "", False):
+                pass
+            else:
+                ok = False
         if ok:
-            self.log("✓ fstab commit removed (after reboot)", "success")
+            self.log("✓ fstab commit removed from selected partitions "
+                     "(after reboot)", "success")
         return ok
 
     def _commit_applied(self):
@@ -1579,22 +1785,25 @@ class SystemOps:
                 content = f.read()
         except Exception:
             return False
-        if not self.mount_items:
+        candidates = self.commit_targets or [
+            mp for m in self.mount_items
+            if fs_supports_commit(m.get("fstype", ""))
+            for mp in m["mps"]]
+        if not candidates:
             return False
-        for m in self.mount_items:
-            found = False
+        for mp in candidates:
+            fstype = self._fstype_of_mp(mp)
+            if not fs_supports_commit(fstype):
+                continue
             for line in lines_in(content):
                 s = line.strip()
                 if not s or s.startswith("#"):
                     continue
                 f2 = s.split()
-                if len(f2) >= 4 and f2[1] in m["mps"]:
+                if len(f2) >= 4 and f2[1] == mp:
                     if any(o.startswith("commit=") for o in f2[3].split(",")):
-                        found = True
-                        break
-            if not found:
-                return False
-        return True
+                        return True
+        return False
 
     def apply_steam_links(self, libs):
         src = os.path.join(self.state.user_home, ".steam", "steam",
@@ -1729,6 +1938,42 @@ class SystemOps:
         self.log("✓ commands added to .bashrc (source ~/.bashrc for new cmds)", "success")
         return True
 
+    APT_DAILY_UNITS = [
+        "apt-daily.timer",
+        "apt-daily-upgrade.timer",
+        "apt-daily.service",
+        "apt-daily-upgrade.service",
+        "unattended-upgrades.service",
+        "mintupdate-automation-upgrade.timer",
+        "mintupdate-automation-upgrade.service",
+    ]
+
+    def _mask_apt_daily(self):
+        if self.dry_run:
+            for u in self.APT_DAILY_UNITS:
+                self.log("[DRY RUN] mask %s" % u, "warning")
+            return True
+        for u in self.APT_DAILY_UNITS:
+            if not self.unit_exists(u):
+                continue
+            self.sudo_run(["systemctl", "disable", "--now", u], ignore_error=True)
+            self.sudo_run(["systemctl", "mask", u], ignore_error=True)
+        self.log("✓ apt-daily / unattended-upgrades masked", "success")
+        return True
+
+    def _unmask_apt_daily(self):
+        if self.dry_run:
+            for u in self.APT_DAILY_UNITS:
+                self.log("[DRY RUN] unmask %s" % u, "warning")
+            return True
+        for u in self.APT_DAILY_UNITS:
+            if not self.unit_exists(u):
+                continue
+            self.sudo_run(["systemctl", "unmask", u], ignore_error=True)
+        self.sudo_run(["systemctl", "daemon-reload"], ignore_error=True)
+        self.log("✓ apt-daily / unattended-upgrades unmasked", "success")
+        return True
+
     def apply_autoupdate(self, params=None):
         params = params or {}
         sched = params.get("update_schedule", "Отключено")
@@ -1779,13 +2024,11 @@ class SystemOps:
                 self.sudo_run(["systemctl", "daemon-reload"], ignore_error=True)
                 self.sudo_run(["systemctl", "enable", "--now", "biweekly-upgrade.timer"],
                               ignore_error=True)
+            self._mask_apt_daily()
             return True
         if self.dry_run:
             self.log("[DRY RUN] create timer: %s" % desc, "warning"); return True
-        if self.service_enabled("mintupdate-automation-upgrade.timer") == "enabled":
-            self.log("Disabling mintupdate-automation-upgrade.timer", "info")
-            self.sudo_run(["systemctl", "disable", "--now",
-                           "mintupdate-automation-upgrade.timer"], ignore_error=True)
+        self._mask_apt_daily()
         if not self.write_file(svc, svc_c, chmod="644"):
             return False
         if not self.write_file(tmr, tmr_c, chmod="644"):
@@ -1876,6 +2119,11 @@ class SystemOps:
 
     def rollback_nmi_watchdog(self, params=None):
         return self._remove_grub_params(["nmi_watchdog=0"])
+
+    def rollback_itco_wdt(self, params=None):
+        self._rm("/etc/modprobe.d/nmi-watchdog.conf")
+        self.sudo_run(["modprobe", "-r", "iTCO_wdt"], ignore_error=True)
+        self.log("✓ iTCO_wdt blacklist removed", "success"); return True
 
     def rollback_corectrl(self, params=None):
         self._rm("/etc/polkit-1/rules.d/90-corectrl.rules")
@@ -1983,7 +2231,9 @@ class SystemOps:
         return False
 
     def rollback_autoupdate(self, params=None):
-        return self.apply_autoupdate({"update_schedule": "Отключено"})
+        ok = self.apply_autoupdate({"update_schedule": "Отключено"})
+        self._unmask_apt_daily()
+        return ok
 
 
 class Sig(QObject):
@@ -2159,15 +2409,19 @@ class MainWindow(QMainWindow):
         self.badges = {}
         self.mount_badges = {}
         self.steam_badges = {}
+        self.commit_badges = {}
         self.option_widgets = {}
+        self.disabled_reasons = {}
         self.opts_state = {k: False for k in OPTIONS_META}
         self.mount_state = {}
         self.steam_state = {}
+        self.commit_state = {}
         self._tasks = []
         self._ram_cache = None
         self._info_dlg = None
         self.sched_lbl = None
         self.thp_lbl = None
+        self._zfs_button = None
         self.debug_enabled = False
         self._debug_fh = None
         self._debug_lock = threading.Lock()
@@ -2201,6 +2455,10 @@ class MainWindow(QMainWindow):
             mounts.append(it)
             self.mount_state[it["mp"]] = False
         self.mount_items = mounts
+        for m in self.mount_items:
+            if fs_supports_commit(m.get("fstype", "")):
+                for mp in m["mps"]:
+                    self.commit_state[mp] = False
         self.steam_items = []
         for lib in find_steam_libraries(self.state.user_home):
             if self._lib_on_ntfs(lib):
@@ -2224,6 +2482,7 @@ class MainWindow(QMainWindow):
         self.sig.status_html.connect(self._on_status_html)
         self.sig.toast.connect(self._on_toast)
         self.sig.spawn.connect(self._spawn_task)
+        self._compute_disabled_reasons()
         self.build_ui()
         self.log("%s v%s запущен" % (APP_NAME, APP_VERSION), "success")
         self.log("GPU: %s %s" % (self.state.gpu, self.state.gpu_model), "info")
@@ -2304,6 +2563,34 @@ class MainWindow(QMainWindow):
                     "2 раза в месяц (1 и 15)", "Ежемесячно (1 число)")
         return ("Disabled", "Daily", "Weekly (Saturday)",
                 "Twice a month (1 & 15)", "Monthly (1st)")
+
+    def _compute_disabled_reasons(self):
+        r = {}
+        if self.state.has_raid:
+            r["raid"] = ("у вас есть RAID" if self.lang == "ru"
+                         else "RAID detected")
+        if not getattr(self.state, "zfs_installed", False):
+            r["zfs_services"] = ("пакеты ZFS не установлены" if self.lang == "ru"
+                                 else "ZFS packages not installed")
+        itco_ok, itco_reason = self.state.itco_status()
+        if not itco_ok:
+            r["itco_wdt"] = itco_reason
+        if self.state.gpu not in ("AMD", "Unknown"):
+            for k in ("corectrl", "ppfeaturemask", "vrr", "radv"):
+                r[k] = ("только для AMD" if self.lang == "ru" else "AMD only")
+        if self.state.gpu not in ("NVIDIA", "Unknown"):
+            r["nvidia_modeset"] = ("только для NVIDIA" if self.lang == "ru"
+                                   else "NVIDIA only")
+        if not self.state.has_swap:
+            r["swap"] = ("swap не обнаружен" if self.lang == "ru"
+                         else "no swap found")
+        if not zram_generator_present():
+            r["zram"] = ("нет zram-generator" if self.lang == "ru"
+                         else "zram-generator not installed")
+        if not os.path.exists("/usr/lib/modprobe.d/mint-blacklist-ntfs3.conf"):
+            r["ntfs3"] = ("только для Linux Mint" if self.lang == "ru"
+                          else "Linux Mint only")
+        self.disabled_reasons = r
 
     def _lib_on_ntfs(self, lib):
         best, dev, fstype = "", "", ""
@@ -2452,7 +2739,7 @@ class MainWindow(QMainWindow):
         for _k, _v in c.items():
             qss = qss.replace("{" + _k + "}", _v)
         self.setStyleSheet(qss)
-        self.setWindowTitle("%s v%s" % (APP_NAME, APP_VERSION))
+        self.setWindowTitle("%s v%s (%s)" % (APP_NAME, APP_VERSION, APP_BUILD_DATE))
         self.setWindowIcon(QIcon(make_icon("logo", 64, c["accent"])))
         central = QWidget()
         central.setObjectName("central")
@@ -2468,7 +2755,7 @@ class MainWindow(QMainWindow):
         title = QLabel(APP_NAME)
         title.setStyleSheet("font-size: 20px; font-weight: bold; color: %s;" % c["accent"])
         head.addWidget(title)
-        ver = QLabel("v" + APP_VERSION)
+        ver = QLabel("v%s (%s)" % (APP_VERSION, APP_BUILD_DATE))
         ver.setStyleSheet("color: %s;" % c["gray"])
         head.addWidget(ver)
         head.addStretch(1)
@@ -2523,7 +2810,6 @@ class MainWindow(QMainWindow):
         self.toast_w = Toast(central)
         self.theme_btn.setText(self.t("theme_dark") if self.theme == "light"
                                else self.t("theme_light"))
-        self.apply_hardware_restrictions()
         self.resize(min(1080, self.avail_w - 40), min(820, self.avail_h - 40))
 
     def _build_tune(self, c):
@@ -2563,6 +2849,8 @@ class MainWindow(QMainWindow):
         vl.setSpacing(2)
         cats = {}
         for k in OPTIONS_META:
+            if k == "commit":
+                continue
             cats.setdefault(self.om(k)[2], []).append(k)
         order = CAT_ORDER[self.lang]
         seq = [x for x in order if x in cats] + \
@@ -2595,6 +2883,11 @@ class MainWindow(QMainWindow):
         cb.toggled.connect(lambda v, k=key: self.opts_state.__setitem__(k, v))
         top.addWidget(cb)
         self.option_widgets[key] = cb
+        if key in self.disabled_reasons:
+            reason = QLabel("(%s)" % self.disabled_reasons[key])
+            reason.setStyleSheet("color: %s; font-style: italic;" % c["gray"])
+            top.addWidget(reason)
+            cb.setEnabled(False)
         if key == "corectrl":
             top.addWidget(QLabel(self.t("lbl_group")))
             le = QLineEdit(self.corectrl_group)
@@ -2606,12 +2899,6 @@ class MainWindow(QMainWindow):
             le = QLineEdit(self.swap_value)
             le.setFixedWidth(60)
             le.textChanged.connect(lambda v: setattr(self, "swap_value", v))
-            top.addWidget(le)
-        elif key == "commit":
-            top.addWidget(QLabel(self.t("lbl_value")))
-            le = QLineEdit(self.commit_value)
-            le.setFixedWidth(60)
-            le.textChanged.connect(lambda v: setattr(self, "commit_value", v))
             top.addWidget(le)
         elif key == "thp":
             top.addWidget(QLabel(self.t("lbl_value")))
@@ -2654,6 +2941,20 @@ class MainWindow(QMainWindow):
         dl.setWordWrap(True)
         dl.setStyleSheet("color: %s; font-size: 12px;" % c["gray"])
         vl.addWidget(dl)
+        if key == "zfs_services":
+            zfs_removable = (self.state.zfs_installed and not self.state.zfs_used)
+            btn_text = (self.t("btn_remove_zfs") if zfs_removable
+                        else self.t("btn_remove_zfs_unavailable"))
+            self._zfs_button = QPushButton(btn_text)
+            self._zfs_button.setStyleSheet(
+                "color: %s;" % (c["red"] if zfs_removable else c["gray"]))
+            self._zfs_button.setEnabled(zfs_removable)
+            self._zfs_button.clicked.connect(self._zfs_remove_packages)
+            hl = QHBoxLayout()
+            hl.setContentsMargins(24, 4, 0, 0)
+            hl.addWidget(self._zfs_button)
+            hl.addStretch(1)
+            vl.addLayout(hl)
         return row
 
     def _disk_extras(self, vl, c):
@@ -2697,6 +2998,64 @@ class MainWindow(QMainWindow):
                 self.mount_badges[m["mps"][0]] = badge
                 hl.addStretch(1)
                 vl.addWidget(row)
+        vl.addSpacing(6)
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("color: %s;" % c["border"])
+        vl.addWidget(sep)
+        hh = QHBoxLayout()
+        h = QLabel("─── %s ───" % self.t("commit_title"))
+        h.setStyleSheet("color: %s; font-weight: bold; font-size: 13px;" % c["yellow"])
+        hh.addWidget(h)
+        fb = QPushButton(self.t("btn_file"))
+        fb.setIcon(QIcon(make_icon("file", 18, c["blue"])))
+        fb.setFixedHeight(26)
+        fb.clicked.connect(lambda _c: self._open_path("/etc/fstab"))
+        hh.addWidget(fb)
+        qb = QPushButton(self.t("btn_q"))
+        qb.setObjectName("qbtn")
+        qb.setFixedSize(26, 26)
+        qb.clicked.connect(lambda _c: self._show_option_help("commit"))
+        hh.addWidget(qb)
+        hh.addStretch(1)
+        vl.addLayout(hh)
+        if self.commit_state:
+            val_row = QHBoxLayout()
+            val_row.setContentsMargins(8, 2, 8, 2)
+            val_row.addWidget(QLabel(self.t("commit_value_label")))
+            le = QLineEdit(self.commit_value)
+            le.setFixedWidth(60)
+            le.textChanged.connect(lambda v: setattr(self, "commit_value", v))
+            val_row.addWidget(le)
+            val_row.addStretch(1)
+            vl.addLayout(val_row)
+            d = QLabel(self.t("commit_desc"))
+            d.setWordWrap(True)
+            d.setStyleSheet("color: %s; font-size: 12px;" % c["gray"])
+            vl.addWidget(d)
+            for m in self.mount_items:
+                if not fs_supports_commit(m.get("fstype", "")):
+                    continue
+                for mp in m["mps"]:
+                    row = QFrame()
+                    row.setObjectName("optrow")
+                    hl = QHBoxLayout(row)
+                    hl.setContentsMargins(8, 4, 8, 4)
+                    cb = QCheckBox("%s (%s) — %s" % (mp, m["dev"], m["fstype"]))
+                    cb.setChecked(self.commit_state.get(mp, False))
+                    cb.toggled.connect(
+                        lambda v, k=mp: self.commit_state.__setitem__(k, v))
+                    hl.addWidget(cb)
+                    badge = QLabel("…")
+                    hl.addWidget(badge)
+                    self.commit_badges[mp] = badge
+                    hl.addStretch(1)
+                    vl.addWidget(row)
+        else:
+            d = QLabel(self.t("commit_none"))
+            d.setWordWrap(True)
+            d.setStyleSheet("color: %s; font-size: 12px;" % c["gray"])
+            vl.addWidget(d)
         if self.steam_items:
             vl.addSpacing(6)
             sep = QFrame()
@@ -2823,8 +3182,11 @@ class MainWindow(QMainWindow):
                 self.log("No help for %s" % key, "info")
                 return
             title = self.om(key)[0] if key in OPTIONS_META else \
-                (self.t("mount_title") if key == "mount" else self.t("steam_title"))
-            self._open_info_dialog(title, "<p style='font-size:14px;'>%s</p>" % txt)
+                (self.t("mount_title") if key == "mount"
+                 else self.t("commit_title") if key == "commit"
+                 else self.t("steam_title"))
+            self._open_info_dialog(title, "<p style='font-size:14px;'>%s</p>"
+                                   % txt.replace("\n\n", "</p><p>").replace("\n", "<br>"))
         except Exception as e:
             traceback.print_exc()
             self.log("Help error: %s" % e, "error")
@@ -2835,7 +3197,8 @@ class MainWindow(QMainWindow):
             if not txt:
                 self.log("No help for %s" % name, "info")
                 return
-            self._open_info_dialog(name, "<p style='font-size:14px;'>%s</p>" % txt)
+            self._open_info_dialog(name, "<p style='font-size:14px;'>%s</p>"
+                                   % txt.replace("\n\n", "</p><p>").replace("\n", "<br>"))
         except Exception as e:
             traceback.print_exc()
             self.log("Help error: %s" % e, "error")
@@ -2866,7 +3229,7 @@ class MainWindow(QMainWindow):
         dlg = QDialog(self)
         dlg.setWindowTitle(self.t("about_title"))
         dlg.setModal(True)
-        dlg.resize(min(640, self.screen_w - 60), min(460, self.screen_h - 80))
+        dlg.resize(min(680, self.screen_w - 60), min(560, self.screen_h - 80))
         vl = QVBoxLayout(dlg)
         vl.setContentsMargins(12, 12, 12, 12)
         te = QTextBrowser()
@@ -2874,15 +3237,25 @@ class MainWindow(QMainWindow):
         te.setOpenExternalLinks(True)
         te.setContextMenuPolicy(Qt.CustomContextMenu)
         te.customContextMenuRequested.connect(lambda p, w=te: self._menu_for(w, p))
+        disclaimer_html = (self.t("about_disclaimer")
+                           .replace("&", "&amp;").replace("<", "&lt;")
+                           .replace(">", "&gt;").replace("\n", "<br>"))
         html = ('<div style="font-family: monospace;">'
                 '<h2>%s v%s</h2>'
+                '<p style="color:#888;">%s</p>'
                 '<p>%s</p>'
                 '<p><b>%s:</b> %s</p>'
-                '<p><a href="%s">%s</a></p></div>'
-                % (APP_NAME, APP_VERSION,
+                '<p><b>%s:</b> %s</p>'
+                '<p><a href="%s">%s</a></p>'
+                '<hr>'
+                '<p style="font-size:12px;">%s</p>'
+                '</div>'
+                % (APP_NAME, APP_VERSION, APP_BUILD_DATE,
                    self.t("about_purpose"),
                    self.t("about_author"), self.t("about_author_name"),
-                   GITHUB_URL, GITHUB_URL))
+                   self.t("about_license"), LICENSE_NAME,
+                   GITHUB_URL, GITHUB_URL,
+                   disclaimer_html))
         te.setHtml(html)
         vl.addWidget(te)
         bb = QHBoxLayout()
@@ -2966,13 +3339,18 @@ class MainWindow(QMainWindow):
 
     def select_all_options(self):
         for k in self.opts_state:
+            if k in self.disabled_reasons:
+                continue
             w = self.option_widgets.get(k)
             if w is not None and w.isEnabled():
                 self.opts_state[k] = True
+                w.setChecked(True)
         for k in self.mount_state:
             self.mount_state[k] = True
         for k in self.steam_state:
             self.steam_state[k] = True
+        for k in self.commit_state:
+            self.commit_state[k] = True
         self._rebuild()
 
     def reset_options(self):
@@ -2982,6 +3360,8 @@ class MainWindow(QMainWindow):
             self.mount_state[k] = False
         for k in self.steam_state:
             self.steam_state[k] = False
+        for k in self.commit_state:
+            self.commit_state[k] = False
         self._rebuild()
 
     def select_all_services(self):
@@ -3010,11 +3390,13 @@ class MainWindow(QMainWindow):
         if self.is_running:
             QMessageBox.information(self, APP_NAME, self.t("msg_run"))
             return
-        selected = [k for k, v in self.opts_state.items() if v]
+        selected = [k for k, v in self.opts_state.items()
+                    if v and k not in self.disabled_reasons]
         mount_sel = [mp for m in self.mount_items if self.mount_state.get(m["mps"][0])
                      for mp in m["mps"]]
         steam_sel = [l for l in self.steam_items if self.steam_state.get(l)]
-        if not selected and not mount_sel and not steam_sel:
+        commit_sel = [mp for mp, v in self.commit_state.items() if v]
+        if not selected and not mount_sel and not steam_sel and not commit_sel:
             QMessageBox.warning(self, APP_NAME, self.t("msg_noopt"))
             return
         params = {"corectrl_group": self.corectrl_group,
@@ -3036,13 +3418,15 @@ class MainWindow(QMainWindow):
         self.sig.progress.emit(0)
         self.sig.statusbar.emit(self.t("running"))
         t = self._spawn_task(lambda: self._apply_work(selected, mount_sel, steam_sel,
-                                                      params, dry))
+                                                      commit_sel, params, dry))
         t.finished.connect(lambda: self.sig.running.emit(False))
 
-    def _apply_work(self, selected, mount_sel, steam_sel, params, dry):
+    def _apply_work(self, selected, mount_sel, steam_sel, commit_sel, params, dry):
         ops = SystemOps(self.sudo, self.state, self.log, dry)
         ops.mount_items = self.mount_items
-        total = len(selected) + (1 if mount_sel else 0) + (1 if steam_sel else 0)
+        ops.commit_targets = commit_sel
+        total = len(selected) + (1 if mount_sel else 0) + (1 if steam_sel else 0) \
+            + (1 if commit_sel else 0)
         if total == 0:
             return
         done = 0
@@ -3061,6 +3445,11 @@ class MainWindow(QMainWindow):
             if mount_sel:
                 self.log("→ %s" % self.t("mount_title"), "info")
                 ops.apply_mount_opts(mount_sel)
+                done += 1
+                self.sig.progress.emit(int(done / total * 90))
+            if commit_sel:
+                self.log("→ %s" % self.t("commit_title"), "info")
+                ops.apply_commit(params)
                 done += 1
                 self.sig.progress.emit(int(done / total * 90))
             if steam_sel:
@@ -3085,11 +3474,13 @@ class MainWindow(QMainWindow):
         if self.is_running:
             QMessageBox.information(self, APP_NAME, self.t("msg_run"))
             return
-        selected = [k for k, v in self.opts_state.items() if v]
+        selected = [k for k, v in self.opts_state.items()
+                    if v and k not in self.disabled_reasons]
         mount_sel = [mp for m in self.mount_items if self.mount_state.get(m["mps"][0])
                      for mp in m["mps"]]
         steam_sel = [l for l in self.steam_items if self.steam_state.get(l)]
-        if not selected and not mount_sel and not steam_sel:
+        commit_sel = [mp for mp, v in self.commit_state.items() if v]
+        if not selected and not mount_sel and not steam_sel and not commit_sel:
             QMessageBox.warning(self, APP_NAME, self.t("msg_noopt"))
             return
         dry = self.dry_check.isChecked()
@@ -3103,13 +3494,15 @@ class MainWindow(QMainWindow):
         self.sig.progress.emit(0)
         self.sig.statusbar.emit(self.t("running"))
         t = self._spawn_task(lambda: self._rollback_work(selected, mount_sel,
-                                                         steam_sel, dry))
+                                                         steam_sel, commit_sel, dry))
         t.finished.connect(lambda: self.sig.running.emit(False))
 
-    def _rollback_work(self, selected, mount_sel, steam_sel, dry):
+    def _rollback_work(self, selected, mount_sel, steam_sel, commit_sel, dry):
         ops = SystemOps(self.sudo, self.state, self.log, dry)
         ops.mount_items = self.mount_items
-        total = len(selected) + (1 if mount_sel else 0) + (1 if steam_sel else 0)
+        ops.commit_targets = commit_sel
+        total = len(selected) + (1 if mount_sel else 0) + (1 if steam_sel else 0) \
+            + (1 if commit_sel else 0)
         if total == 0:
             return
         done = 0
@@ -3127,6 +3520,10 @@ class MainWindow(QMainWindow):
                 self.sig.progress.emit(int(done / total * 90))
             if mount_sel:
                 ops.rollback_mount_opts(mount_sel)
+                done += 1
+                self.sig.progress.emit(int(done / total * 90))
+            if commit_sel:
+                ops.rollback_commit({})
                 done += 1
                 self.sig.progress.emit(int(done / total * 90))
             if steam_sel:
@@ -3205,9 +3602,56 @@ class MainWindow(QMainWindow):
         self.sig.spawn.emit(self._services_work)
         self.sig.spawn.emit(self._status_work)
 
+    def _zfs_remove_packages(self):
+        if self.state.zfs_used:
+            QMessageBox.warning(self, APP_NAME,
+                                "ZFS is in use, removal blocked."
+                                if self.lang == "en"
+                                else "ZFS используется, удаление заблокировано.")
+            return
+        if not self.state.zfs_installed:
+            QMessageBox.information(self, APP_NAME,
+                                    "ZFS packages not installed."
+                                    if self.lang == "en"
+                                    else "Пакеты ZFS не установлены.")
+            return
+        ans = QMessageBox.question(self, self.t("zfs_remove_title"),
+                                   self.t("zfs_remove_body"),
+                                   QMessageBox.Yes | QMessageBox.No,
+                                   QMessageBox.No)
+        if ans != QMessageBox.Yes:
+            return
+        if not self.sudo.ensure():
+            self.log("sudo failed", "error")
+            return
+        self.is_running = True
+        self.apply_btn.setEnabled(False)
+        self.sig.running.emit(True)
+        self.sig.progress.emit(0)
+        self.sig.statusbar.emit(self.t("running"))
+        self._spawn_task(self._zfs_remove_work)
+
+    def _zfs_remove_work(self):
+        ops = SystemOps(self.sudo, self.state, self.log, self.dry_check.isChecked())
+        try:
+            ok = ops.apply_zfs_remove_packages()
+            if ok:
+                self.log(self.t("zfs_remove_done"), "info")
+                self.sig.toast.emit(self.t("zfs_remove_done"), "ok")
+        except Exception as e:
+            self.log("Critical error: %s" % e, "error")
+        finally:
+            self.state.zfs_installed = zfs_packages_installed()
+            self.state.zfs_used = zfs_in_use()
+            self.sig.running.emit(False)
+            self.sig.spawn.emit(self._applied_work)
+            self.sig.spawn.emit(self._status_work)
+            self.sig.spawn.emit(self._services_work)
+
     def _applied_work(self):
         ops = SystemOps(self.sudo, self.state, lambda m, t: None, True)
         ops.mount_items = self.mount_items
+        ops.commit_targets = list(self.commit_state.keys())
         self.sig.applied.emit(self._detect_applied(ops))
         self.sig.mount_applied.emit(self._detect_mount())
         self.sig.steam_applied.emit(self._detect_steam())
@@ -3273,6 +3717,7 @@ class MainWindow(QMainWindow):
         sysc = ops.read_file("/etc/sysctl.d/99-gaming-sysctl.conf") or ""
         bashrc = ops.read_file(os.path.join(self.state.user_home, ".bashrc")) or ""
         mint = ops.read_file("/usr/lib/modprobe.d/mint-blacklist-ntfs3.conf") or ""
+        itco = ops.read_file("/etc/modprobe.d/nmi-watchdog.conf") or ""
 
         def sv(p):
             try:
@@ -3291,6 +3736,8 @@ class MainWindow(QMainWindow):
             "audit": "audit=0" in grub,
             "raid": "raid=noautodetect" in grub,
             "nmi_watchdog": "nmi_watchdog=0" in grub,
+            "itco_wdt": "blacklist iTCO_wdt" in itco,
+            "zfs_services": zfs_units_masked() if self.state.zfs_installed else False,
             "corectrl": self._corectrl_found(ops),
             "ppfeaturemask": "amdgpu.ppfeaturemask" in grub,
             "nvidia_modeset": "nvidia-drm.modeset=1" in grub,
@@ -3303,7 +3750,9 @@ class MainWindow(QMainWindow):
             "zram": ops.path_exists("/etc/systemd/zram-generator.conf")
                     and zram_generator_present(),
             "zswap": "zswap.enabled=1" in grub,
-            "thp": bool(re.search(r"transparent_hugepage=%s\b" % self.thp_value, grub)),
+            "thp": (self._thp_current() == self.thp_value)
+                    or bool(re.search(r"transparent_hugepage=%s\b"
+                                      % self.thp_value, grub)),
             "sysctl_cache": bool(re.search(r"^vm\.vfs_cache_pressure=50$", sysc, re.M))
                             or sv("vm.vfs_cache_pressure") == "50",
             "sysctl_numa": bool(re.search(r"^kernel\.numa_balancing=0$", sysc, re.M))
@@ -3372,6 +3821,7 @@ class MainWindow(QMainWindow):
         try:
             ops = SystemOps(self.sudo, self.state, lambda m, t: None, True)
             ops.mount_items = self.mount_items
+            ops.commit_targets = list(self.commit_state.keys())
             try:
                 A = self._detect_applied(ops)
                 self.sig.applied.emit(A)
@@ -3500,6 +3950,12 @@ class MainWindow(QMainWindow):
                 tw_rows.append("<tr><td style='color:%s;'><b>%s</b></td><td style='color:%s;'><b>%s</b></td><td style='color:%s;'>%s</td></tr>" % (
                     col("fg"), esc(label), cc, self.t("yes") if ok else self.t("no"),
                     col("gray"), esc(short)))
+            for mp in self.commit_state:
+                ok = A.get("commit", False)
+                cc = col("green") if ok else col("red")
+                tw_rows.append("<tr><td style='color:%s;'><b>%s</b></td><td style='color:%s;'><b>%s</b></td><td style='color:%s;'>%s</td></tr>" % (
+                    col("fg"), esc(self.t("commit_title")), cc,
+                    self.t("yes") if ok else self.t("no"), col("gray"), esc(mp)))
             for m in self.mount_items:
                 ok = self.mount_applied.get(m["mps"][0], False)
                 cc = col("green") if ok else col("red")
@@ -3554,6 +4010,14 @@ class MainWindow(QMainWindow):
                 col("gray"), esc(self.t("kern_thp")),
                 col("green") if thp_ok else col("red"),
                 self.t("yes") if thp_ok else self.t("no")))
+            wd = self.state._read_watchdog()
+            wd_ok = (wd == 0)
+            kn_rows.append("<tr><td style='color:%s;'><b>%s</b></td><td style='color:%s;'><b>%s</b></td><td style='color:%s;'>%s</td><td style='color:%s;'><b>%s</b></td></tr>" % (
+                col("fg"), esc("kernel.nmi_watchdog"),
+                col("fg"), esc(str(wd) if wd >= 0 else "n/a"),
+                col("gray"), esc(self.t("kern_wd")),
+                col("green") if wd_ok else col("red"),
+                self.t("yes") if wd_ok else self.t("no")))
             timer = ops.service_enabled("biweekly-upgrade.timer")
             tcc = col("green") if timer == "enabled" else col("gray")
             kn_rows.append("<tr><td style='color:%s;'><b>%s</b></td><td style='color:%s;'><b>%s</b></td><td colspan='2'></td></tr>" % (
@@ -3608,6 +4072,8 @@ class MainWindow(QMainWindow):
             pill(b, self.mount_applied.get(k, False))
         for k, b in self.steam_badges.items():
             pill(b, self.steam_applied.get(k, False))
+        for k, b in self.commit_badges.items():
+            pill(b, self.applied.get("commit", False))
         if self.thp_lbl is not None:
             fmt = self.t("thp_cur")
             cur = self._thp_current() or "?"
@@ -3695,14 +4161,19 @@ class MainWindow(QMainWindow):
         self.badges = {}
         self.mount_badges = {}
         self.steam_badges = {}
+        self.commit_badges = {}
         self.option_widgets = {}
         self.sched_lbl = None
         self.thp_lbl = None
+        self._zfs_button = None
         old = self.centralWidget()
         if old is not None:
             old.hide()
             old.setParent(None)
             old.deleteLater()
+        self.state.zfs_installed = zfs_packages_installed()
+        self.state.zfs_used = zfs_in_use()
+        self._compute_disabled_reasons()
         self.build_ui()
         if hist:
             self.terminal.setPlainText(hist)
@@ -3711,39 +4182,6 @@ class MainWindow(QMainWindow):
         self._spawn_task(self._services_work)
         self._spawn_task(self._status_work)
         self._spawn_task(self._applied_work)
-
-    def apply_hardware_restrictions(self):
-        if self.state.gpu not in ("AMD", "Unknown"):
-            for k in ("corectrl", "ppfeaturemask", "vrr", "radv"):
-                w = self.option_widgets.get(k)
-                if w is not None:
-                    w.setEnabled(False)
-                self.opts_state[k] = False
-        if self.state.gpu not in ("NVIDIA", "Unknown"):
-            w = self.option_widgets.get("nvidia_modeset")
-            if w is not None:
-                w.setEnabled(False)
-            self.opts_state["nvidia_modeset"] = False
-        if self.state.has_raid:
-            w = self.option_widgets.get("raid")
-            if w is not None:
-                w.setEnabled(False)
-            self.opts_state["raid"] = False
-        if not self.state.has_swap:
-            w = self.option_widgets.get("swap")
-            if w is not None:
-                w.setEnabled(False)
-            self.opts_state["swap"] = False
-        if not os.path.exists("/usr/lib/modprobe.d/mint-blacklist-ntfs3.conf"):
-            w = self.option_widgets.get("ntfs3")
-            if w is not None:
-                w.setEnabled(False)
-            self.opts_state["ntfs3"] = False
-        if not zram_generator_present():
-            w = self.option_widgets.get("zram")
-            if w is not None:
-                w.setEnabled(False)
-            self.opts_state["zram"] = False
 
     def closeEvent(self, e):
         if self.is_running:
@@ -3759,6 +4197,7 @@ class MainWindow(QMainWindow):
                     self._debug_fh.flush()
                 except Exception:
                     pass
+        release_lock()
         e.accept()
 
 
@@ -3806,9 +4245,12 @@ QToolTip { background: {panel}; color: {fg}; border: 1px solid {border}; }
 
 def main():
     if "--help" in sys.argv or "-h" in sys.argv:
-        print("%s v%s\npython3 linux_tweaker.py [--dry-run]"
-              % (APP_NAME, APP_VERSION))
+        print("%s v%s (%s)\npython3 linux_tweaker.py [--dry-run]"
+              % (APP_NAME, APP_VERSION, APP_BUILD_DATE))
         sys.exit(0)
+    if not acquire_lock():
+        print("Linux Tweaker is already running.", file=sys.stderr)
+        sys.exit(1)
     if os.geteuid() == 0:
         print("WARNING: Linux Tweaker should be run as a normal user, not as root. "
               "Sudo will be requested when needed.", file=sys.stderr)
@@ -3816,7 +4258,10 @@ def main():
     app.setApplicationName(APP_NAME)
     win = MainWindow()
     win.show()
-    sys.exit(app.exec_())
+    try:
+        sys.exit(app.exec_())
+    finally:
+        release_lock()
 
 
 if __name__ == "__main__":
