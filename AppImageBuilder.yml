@@ -1,17 +1,14 @@
-version: 1
-
 script:
   - rm -rf AppDir || true
   - mkdir -p AppDir/usr/src
   - mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
   - mkdir -p AppDir/usr/share/applications
-  # Основной скрипт
   - cp linux_tweaker.py AppDir/usr/src/main.py
-  # КРИТИЧНО: список пакетов для вкладки «Приложения»
   - cp tweaker_packages.py AppDir/usr/src/tweaker_packages.py
-  # Иконка
+  - cp tweaker_packages.py AppDir/usr/src/
   - cp icon.png AppDir/usr/share/icons/hicolor/256x256/apps/linux-tweaker.png
-  # .desktop для меню системы
+  - cp icon.png AppDir/usr/src/linux-tweaker.png
+  - cp icon.png AppDir/usr/src/linux_tweaker.png
   - |
     cat > AppDir/usr/share/applications/linux-tweaker.desktop <<'EOF'
     [Desktop Entry]
@@ -44,8 +41,8 @@ AppDir:
       - python3-pyqt5
     exclude: []
 
-  # PYTHONHOME НЕ ЗАДАЁМ — ломает Python на чужих системах.
-  # PYTHONPATH оставляем, чтобы PyQt5 нашёлся.
+  # PYTHONHOME НЕ ЗАДАЁМ — иначе Python не запустится на других системах.
+  # PYTHONPATH оставляем, чтобы PyQt5 нашёлся при запуске.
   runtime:
     env:
       PYTHONPATH: '${APPDIR}/usr/lib/python3/dist-packages'
