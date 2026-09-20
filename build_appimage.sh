@@ -5,10 +5,37 @@ script:
   # Создаём структуру каталогов
   - mkdir -p AppDir/usr/src
   - mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
-  # Копируем основной скрипт (ваш файл переименован для ясности)
+  - mkdir -p AppDir/usr/share/applications
+  # Копируем основной скрипт
   - cp linux_tweaker.py AppDir/usr/src/main.py
-  # Копируем иконку (создадим её отдельно или используйте любую PNG 256x256)
+  # КРИТИЧНО: копируем список пакетов для вкладки «Приложения»
+  - cp tweaker_packages.py AppDir/usr/src/tweaker_packages.py
+  # Копируем иконку
   - cp icon.png AppDir/usr/share/icons/hicolor/256x256/apps/linux-tweaker.png
+  # Создаём .desktop-файл (нужен для меню системы)
+  - |
+    cat > AppDir/usr/share/applications/linux-tweaker.desktop <<'EOF'
+    [Desktop Entry]
+    Type=Application
+    Name=Linux Tweaker
+    Comment=Tuning shell for Linux Mint / Ubuntu / Debian
+    Exec=linuxtweaker
+    Icon=linux-tweaker
+    Terminal=false
+    Categories=System;Settings;
+    EOF
+  # Создаём AppRun-обёртку, которая запускает python3 с нашим скриптом
+  - |
+    cat > AppDir/AppRun <<'EOF'
+    #!/bin/bash
+    HERE="$(dirname "$(readlink -f "${0}")")"
+    export APPDIR="${HERE}"
+    # Убираем возможные помехи от родительского Python
+    unset PYTHONHOME
+    unset PYTHONPATH
+    exec "${HERE}/usr/bin/python3" "${HERE}/usr/src/main.py" "$@"
+    EOF
+  - chmod +x AppDir/AppRun
 
 AppDir:
   path: ./AppDir
@@ -16,10 +43,8 @@ AppDir:
     id: org.example.linuxtweaker
     name: Linux Tweaker
     icon: linux-tweaker
-    version: 0.11
-    # Точка входа — Python интерпретатор внутри AppImage
+    version: 1.0
     exec: usr/bin/python3
-    # Аргумент — путь к нашему скрипту
     exec_args: "$APPDIR/usr/src/main.py $@"
 
   apt:
@@ -32,12 +57,11 @@ AppDir:
       - python3-pyqt5
     exclude: []
 
-  # Критично: настраиваем переменные окружения для Python
+  # ВАЖНО: не задаём PYTHONHOME, иначе Python сломается
+  # на системах с другой версией Python
   env:
-    PYTHONHOME: '${APPDIR}/usr'
     PYTHONPATH: '${APPDIR}/usr/lib/python3/dist-packages'
 
 AppImage:
   arch: x86_64
-  # Автоматическое обновление через GitHub Releases (опционально)
-  update-information: 'gh-releases-zsync|Prikolist2021|Linux-Tweaker|latest|Linux-Tweaker-*x86_64.AppImage.zsync'
+  update-information: 'gh-releases-zsync|Prikolist2021|LinuxMint_Tweaker|latest|LinuxTweaker-*x86_64.AppImage.zsync'
