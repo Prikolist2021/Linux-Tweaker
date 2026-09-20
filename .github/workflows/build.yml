@@ -17,7 +17,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Setup Python (for appimage-builder)
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
@@ -26,21 +26,35 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            python3-pip python3-setuptools python3-venv \
+            python3-pip \
             python3-pyqt5 \
-            desktop-file-utils libgdk-pixbuf2.0-dev fakeroot \
-            fuse libfuse2 imagemagick
+            desktop-file-utils \
+            fakeroot \
+            fuse libfuse2
 
       - name: Install appimage-builder
         run: |
           python3 -m pip install --user appimage-builder
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
+      - name: Check required files
+        run: |
+          set -e
+          for f in linux_tweaker.py tweaker_packages.py AppImageBuilder.yml; do
+            if [ ! -f "$f" ]; then
+              echo "ERROR: required file '$f' is missing"
+              exit 1
+            fi
+          done
+          echo "All required files present"
+
       - name: Create placeholder icon (if missing)
         run: |
           if [ ! -f icon.png ]; then
+            sudo apt-get install -y imagemagick
             convert -size 256x256 xc:none \
               -fill '#4ec9b0' -draw 'roundrectangle 20,20 236,236 60,60' \
+              -fill '#ffffff' -draw 'circle 128,128 128,70' \
               icon.png
             echo "Placeholder icon.png created"
           else
@@ -51,7 +65,7 @@ jobs:
         run: |
           pwd
           ls -la
-          find . -maxdepth 2 -iname '*appimage*'
+          find . -maxdepth 2 -iname '*tweaker*' -o -iname '*appimage*'
 
       - name: Build AppImage
         run: |
@@ -60,15 +74,35 @@ jobs:
       - name: List generated files
         run: ls -la *.AppImage
 
+      - name: Verify AppImage contents
+        run: |
+          set -e
+          chmod +x ./*.AppImage
+          ./*.AppImage --appimage-extract >/dev/null
+          echo "--- contents check ---"
+          test -f squashfs-root/usr/src/main.py
+          echo "OK: main.py packed"
+          if [ ! -f squashfs-root/usr/src/tweaker_packages.py ]; then
+            echo "WARNING: tweaker_packages.py NOT packed — Apps tab will be empty"
+          else
+            echo "OK: tweaker_packages.py packed"
+          fi
+          test -f squashfs-root/usr/bin/python3 && echo "OK: python3 present"
+          test -d squashfs-root/usr/lib/python3/dist-packages/PyQt5 \
+            && echo "OK: PyQt5 present" \
+            || { echo "ERROR: PyQt5 missing"; exit 1; }
+          rm -rf squashfs-root
+
       - name: Upload AppImage as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Linux-Tweaker-AppImage
+          name: LinuxTweaker-AppImage
           path: ./*.AppImage
+          if-no-files-found: error
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: ./*.AppImage
           generate_release_notes: true
