@@ -4,8 +4,25 @@ script:
   - rm -rf AppDir || true
   - mkdir -p AppDir/usr/src
   - mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
+  - mkdir -p AppDir/usr/share/applications
+  # Основной скрипт
   - cp linux_tweaker.py AppDir/usr/src/main.py
+  # КРИТИЧНО: список пакетов для вкладки «Приложения»
+  - cp tweaker_packages.py AppDir/usr/src/tweaker_packages.py
+  # Иконка
   - cp icon.png AppDir/usr/share/icons/hicolor/256x256/apps/linux-tweaker.png
+  # .desktop для меню системы
+  - |
+    cat > AppDir/usr/share/applications/linux-tweaker.desktop <<'EOF'
+    [Desktop Entry]
+    Type=Application
+    Name=Linux Tweaker
+    Comment=Tuning shell for Linux Mint / Ubuntu / Debian
+    Exec=linuxtweaker
+    Icon=linux-tweaker
+    Terminal=false
+    Categories=System;Settings;
+    EOF
 
 AppDir:
   path: ./AppDir
@@ -13,7 +30,7 @@ AppDir:
     id: org.prikolist2021.linux-tweaker
     name: Linux Tweaker
     icon: linux-tweaker
-    version: "0.11"
+    version: "1.0"
     exec: usr/bin/python3
     exec_args: "$APPDIR/usr/src/main.py $@"
 
@@ -27,11 +44,12 @@ AppDir:
       - python3-pyqt5
     exclude: []
 
+  # PYTHONHOME НЕ ЗАДАЁМ — ломает Python на чужих системах.
+  # PYTHONPATH оставляем, чтобы PyQt5 нашёлся.
   runtime:
     env:
-      PYTHONHOME: '${APPDIR}/usr'
       PYTHONPATH: '${APPDIR}/usr/lib/python3/dist-packages'
 
 AppImage:
   arch: x86_64
-  update-information: 'gh-releases-zsync|Prikolist2021|Linux-Tweaker|latest|Linux-Tweaker-*x86_64.AppImage.zsync'
+  update-information: 'gh-releases-zsync|Prikolist2021|LinuxMint_Tweaker|latest|LinuxTweaker-*x86_64.AppImage.zsync'
