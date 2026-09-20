@@ -3435,6 +3435,8 @@ class SystemOps:
 
 class Sig(QObject):
     log = pyqtSignal(str, str)
+    apps_confirm = pyqtSignal(str, list)
+    apps_redraw = pyqtSignal()
     statusbar = pyqtSignal(str)
     progress = pyqtSignal(int)
     running = pyqtSignal(bool)
@@ -3637,6 +3639,8 @@ class MainWindow(QMainWindow):
         self.sig.ask_zfs_remove.connect(self._zfs_confirm)
         self.sig.result_summary.connect(self._show_result)
         self.sig.rebuild_tune.connect(self._rebuild_tune_list)
+        self.sig.apps_confirm.connect(self._apps_show_confirm)
+        self.sig.apps_redraw.connect(self._apps_render)
         self.build_ui()
         self.log("%s v%s запущен" % (APP_NAME, APP_VERSION), "success")
         self.log("GPU: %s %s" % (self.state.gpu, self.state.gpu_model), "info")
@@ -5181,10 +5185,10 @@ class MainWindow(QMainWindow):
             from tweaker_packages import REMOVABLE_PACKAGES  # noqa
         except ImportError:
             self._installed_packages = set()
-            self.sig.spawn.emit(self._apps_render)
+            self.sig.apps_redraw.emit()
             return
         self._installed_packages = installed_packages_set()
-        self.sig.spawn.emit(self._apps_render)
+        self.sig.apps_redraw.emit()
 
     def _apps_refresh(self):
         self._installed_packages = None
@@ -5316,7 +5320,7 @@ class MainWindow(QMainWindow):
                       self.t("apps_confirm_system_hint")]
         lines += ["", self.t("apps_confirm_no_rollback")]
         body = "\n".join(lines)
-        QTimer.singleShot(0, lambda: self._apps_show_confirm(body, pkgs))
+        self.sig.apps_confirm.emit(body, pkgs)
 
     def _apps_show_confirm(self, body, pkgs):
         ans = QMessageBox.question(self, self.t("apps_confirm_title"), body,
@@ -5354,7 +5358,7 @@ class MainWindow(QMainWindow):
             self.sig.running.emit(False)
             if not self._dry_check.isChecked():
                 self._installed_packages = installed_packages_set()
-            self.sig.spawn.emit(self._apps_render)
+                self.sig.apps_redraw.emit()
 
     # ─── Детекты ────────────────────────────────────────────────────────
 
@@ -5962,7 +5966,7 @@ class MainWindow(QMainWindow):
         def table(title, headers, rows_html):
             bc = c["border"]
             h = ("<table border='1' cellspacing='0' cellpadding='4' "
-                 "width='100%' style='border-collapse:collapse; "
+                 "width='100%%' style='border-collapse:collapse; "
                  "border:1px solid %s;'>" % bc)
             h += ("<tr><th colspan='%d' style='background:%s; color:%s; "
                   "text-align:left;'>%s</th></tr>"
@@ -6293,7 +6297,6 @@ class MainWindow(QMainWindow):
                 self.t("theme_dark") if self.theme == "light"
                 else self.t("theme_light"))
         self._update_badges()
-        QTimer.singleShot(30, self._restyle_all)
 
     def _apply_theme(self):
         c = self.colors()
@@ -6373,9 +6376,8 @@ class MainWindow(QMainWindow):
             self._terminal.setPlainText(hist)
             self._terminal.moveCursor(QTextCursor.End)
         self._update_badges()
-        self._spawn_task(self._services_work)
-        self._spawn_task(self._applied_work)
-        self._spawn_task(self._status_work)
+        if hasattr(self, "_svc_rows") and self._svc_rows:
+            self._render_services_rows()
         if self._installed_packages is not None:
             self._apps_render()
 
