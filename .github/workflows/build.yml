@@ -91,6 +91,7 @@ jobs:
           test -d squashfs-root/usr/lib/python3/dist-packages/PyQt5 \
             && echo "OK: PyQt5 present" \
             || { echo "ERROR: PyQt5 missing"; exit 1; }
+          test -f squashfs-root/AppRun && echo "OK: AppRun present"
           rm -rf squashfs-root
 
       - name: Upload AppImage as artifact
