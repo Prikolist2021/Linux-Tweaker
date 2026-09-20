@@ -38,7 +38,7 @@ from PyQt5.QtCore import (Qt, QObject, QThread, pyqtSignal, QTimer,
                           QSequentialAnimationGroup)
 from PyQt5.QtGui import (QIcon, QPixmap, QPainter, QColor, QPen, QBrush,
                          QPainterPath, QLinearGradient, QFont, QTextCursor,
-                         QFontDatabase)
+                         QFontDatabase, QTransform)
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget,
                              QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
                              QCheckBox, QLineEdit, QComboBox, QTextEdit,
