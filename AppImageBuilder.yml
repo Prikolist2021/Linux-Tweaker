@@ -1,14 +1,26 @@
+version: 1
+
 script:
+  # Очищаем предыдущую сборку
   - rm -rf AppDir || true
+
+  # Создаём структуру каталогов
   - mkdir -p AppDir/usr/src
   - mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
   - mkdir -p AppDir/usr/share/applications
+
+  # Основной скрипт
   - cp linux_tweaker.py AppDir/usr/src/main.py
+
+  # КРИТИЧНО: список пакетов для вкладки «Приложения»
   - cp tweaker_packages.py AppDir/usr/src/tweaker_packages.py
-  - cp tweaker_packages.py AppDir/usr/src/
+
+  # Иконка в стандартную папку + рядом со скриптом (для _find_icon_path)
   - cp icon.png AppDir/usr/share/icons/hicolor/256x256/apps/linux-tweaker.png
   - cp icon.png AppDir/usr/src/linux-tweaker.png
   - cp icon.png AppDir/usr/src/linux_tweaker.png
+
+  # .desktop для меню системы
   - |
     cat > AppDir/usr/share/applications/linux-tweaker.desktop <<'EOF'
     [Desktop Entry]
@@ -20,6 +32,18 @@ script:
     Terminal=false
     Categories=System;Settings;
     EOF
+
+  # AppRun-обёртка: НЕ затирает PYTHONPATH (нужен для PyQt5)
+  - |
+    cat > AppDir/AppRun <<'EOF'
+    #!/bin/bash
+    HERE="$(dirname "$(readlink -f "${0}")")"
+    export APPDIR="${HERE}"
+    unset PYTHONHOME
+    export PYTHONPATH="${HERE}/usr/lib/python3/dist-packages${PYTHONPATH:+:$PYTHONPATH}"
+    exec "${HERE}/usr/bin/python3" "${HERE}/usr/src/main.py" "$@"
+    EOF
+  - chmod +x AppDir/AppRun
 
 AppDir:
   path: ./AppDir
@@ -41,8 +65,8 @@ AppDir:
       - python3-pyqt5
     exclude: []
 
-  # PYTHONHOME НЕ ЗАДАЁМ — иначе Python не запустится на других системах.
-  # PYTHONPATH оставляем, чтобы PyQt5 нашёлся при запуске.
+  # PYTHONHOME не задаём — иначе Python сломается на системах
+  # с другой версией Python. PYTHONPATH выставляется в AppRun.
   runtime:
     env:
       PYTHONPATH: '${APPDIR}/usr/lib/python3/dist-packages'
